@@ -805,12 +805,6 @@ def uninstall_linux():
     if unpatched_managers:
         print(f"Unpatched {len(unpatched_managers)} selenium-manager(s).")
     print("Uninstalled.")
-    if removed_deploys or unpatched_drivers or unpatched_managers:
-        print(
-            "Hint: tests/test_chromedriver.py auto-runs --deploy before tests; "
-            "re-run uninstall after tests if you want a clean slate.",
-            file=sys.stderr,
-        )
 
 
 REAL_EXE_NAME = "chrome_real.exe"
@@ -1048,7 +1042,7 @@ def main():
             "Examples:\n"
             "  sudo python3 -m untrace --install --stealth --flags --chromedriver\n"
             "  python3 -m untrace --deploy --stealth --flags --chromedriver\n"
-            "  pytest tests/test_chromedriver.py                     # auto-deploys before tests"
+            "  pytest tests/test_chromedriver.py"
         ),
     )
     group = parser.add_mutually_exclusive_group(required=True)

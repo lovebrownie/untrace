@@ -1,26 +1,9 @@
-import subprocess
-import sys
 import time
 
 import pytest
 
 PAGE_LOAD_WAIT = 15
 
-
-@pytest.fixture(scope="module", autouse=True)
-def untrace_deploy():
-    subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "untrace",
-            "--deploy",
-            "--stealth",
-            "--flags",
-            "--chromedriver",
-        ],
-        check=True,
-    )
 
 BLOCKED_MARKERS = (
     "access denied",
@@ -95,7 +78,7 @@ def test_bot_sannysoft_loads(chrome_driver):
 
 
 AKAMAI_TEST_URL = (
-    "https://www.crateandbarrel.com/keane-32-weathered-natural-solid-wood-charging-nightstand/s307077"
+    "https://www.hilton.com/en/"
 )
 
 

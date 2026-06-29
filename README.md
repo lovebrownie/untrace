@@ -99,7 +99,7 @@ When the wrapper is active it strips `--enable-automation`, `--disable-blink-fea
 pytest tests/test_chromedriver.py
 ```
 
-Auto-runs `--deploy --stealth --flags --chromedriver` before the module. `chrome_driver` in `tests/conftest.py` is intentionally minimal — fix failures in untrace, not the fixture.
+Requires a prior `python -m untrace --deploy --stealth --flags --chromedriver` (or `--install`). `chrome_driver` in `tests/conftest.py` is intentionally minimal — fix failures in untrace, not the fixture.
 
 ## Custom scripts
 

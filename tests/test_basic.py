@@ -4,27 +4,81 @@ import pytest
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 
+PAGE_LOAD_WAIT = 15
+
+BLOCKED_MARKERS = (
+    "access denied",
+    "request denied",
+    "errors.edgesuite.net",
+    "you don't have permission to access",
+)
+
+
+def _chrome_options() -> Options:
+    options = Options()
+    options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    options.add_experimental_option("useAutomationExtension", False)
+    options.add_argument("--disable-blink-features=AutomationControlled")
+    return options
+
+
+def _page_content(driver) -> tuple[str, str]:
+    title = (driver.title or "").strip()
+    body = (driver.find_element("tag name", "body").text or "").strip()
+    return title, body
+
+
+def _assert_page_loaded(driver, *, title_contains: str | None = None) -> None:
+    title, body = _page_content(driver)
+    combined = f"{title}\n{body}".lower()
+
+    assert title, f"Title should not be empty (body: {body[:300]!r})"
+    assert body, f"Page body should not be empty (title: {title!r})"
+
+    for marker in BLOCKED_MARKERS:
+        assert marker not in combined, (
+            f"Page blocked — found {marker!r} "
+            f"(title: {title!r}, body: {body[:400]!r})"
+        )
+
+    if title_contains is not None:
+        assert title_contains.lower() in title.lower(), (
+            f"Expected {title_contains!r} in title, got {title!r} "
+            f"(body: {body[:300]!r})"
+        )
+
 
 @pytest.fixture
 def chrome_driver():
-    options = Options()
-    driver = webdriver.Chrome(options=options)
+    driver = webdriver.Chrome(options=_chrome_options())
     try:
         yield driver
     finally:
-        time.sleep(12)
+        time.sleep(PAGE_LOAD_WAIT)
         driver.quit()
 
 
 def test_bot_sannysoft_loads(chrome_driver):
     chrome_driver.get("https://bot.sannysoft.com/")
-    time.sleep(5)
-    assert chrome_driver.title, "Title should not be empty"
+    time.sleep(PAGE_LOAD_WAIT)
+    _assert_page_loaded(chrome_driver)
+
+
+def test_bot_akamai_loads(chrome_driver):
+    chrome_driver.get("https://www.crateandbarrel.com/sale/")
+    time.sleep(PAGE_LOAD_WAIT)
+    _assert_page_loaded(chrome_driver)
+
+
+def test_fpscanner_demo_loads(chrome_driver):
+    chrome_driver.get("https://fpscanner.com/demo/")
+    time.sleep(PAGE_LOAD_WAIT)
+    _assert_page_loaded(chrome_driver, title_contains="fpscanner")
 
 
 def test_untrace_extension_listed_on_chrome_extensions(chrome_driver):
     chrome_driver.get("chrome://extensions/")
-    time.sleep(5)
+    time.sleep(PAGE_LOAD_WAIT)
 
     page = chrome_driver.execute_script("""
     const manager = document.querySelector('extensions-manager');
@@ -44,7 +98,15 @@ def test_untrace_extension_listed_on_chrome_extensions(chrome_driver):
     return { items, text };
     """)
     items = page.get("items") or []
-    page_text = (page.get("text") or "").lower()
+    page_text = (page.get("text") or "").strip()
+
+    assert page_text, "chrome://extensions/ page content should not be empty"
+
+    page_lower = page_text.lower()
+    for marker in BLOCKED_MARKERS:
+        assert marker not in page_lower, (
+            f"chrome://extensions/ shows an error ({marker!r}): {page_text[:400]!r}"
+        )
 
     untrace_items = [
         item for item in items if "untrace" in (item.get("name") or "").lower()
@@ -58,6 +120,6 @@ def test_untrace_extension_listed_on_chrome_extensions(chrome_driver):
         "activez le mode développeur",
         "enable developer mode",
     ):
-        assert phrase not in item_text and phrase not in page_text, (
+        assert phrase not in item_text and phrase not in page_lower, (
             f"Extension should load without an activation prompt, found '{phrase}'"
         )

@@ -19,6 +19,9 @@ CHROME_FLAGS: dict[str, str] = {
     "start-maximized": "--start-maximized",
     "no-default-browser-check": "--no-default-browser-check",
     "no-first-run": "--no-first-run",
+    "disable-automation-controlled": (
+        "--disable-blink-features=AutomationControlled"
+    ),
 }
 
 CHROME_SCRIPTS: dict[str, tuple[str, list | None]] = {
@@ -33,14 +36,21 @@ CHROME_SCRIPTS: dict[str, tuple[str, list | None]] = {
     "navigator.plugins": ("navigator.plugins.js", None),
     "navigator.vendor": ("navigator.vendor.js", ["Google Inc."]),
     "navigator.webdriver": ("navigator.webdriver.js", None),
+    "sourceurl": ("sourceurl.js", None),
+    "akamai": ("akamai.js", None),
     "webgl.vendor": ("webgl.vendor.js", ["Intel Inc.", "Intel Iris OpenGL Engine"]),
     "window.outerdimensions": ("window.outerdimensions.js", None),
     "hairline.fix": ("hairline.fix.js", None),
 }
 
 DEFAULT_CHROME_FLAGS: tuple[str, ...] = tuple(CHROME_FLAGS.keys())
+# Optional scripts are deployed on demand; akamai/sourceurl patch native APIs in ways
+# Akamai Bot Manager detects, and hairline.fix is only needed for headless layouts.
+OPTIONAL_CHROME_SCRIPTS: frozenset[str] = frozenset(
+    {"hairline.fix", "akamai", "sourceurl"}
+)
 DEFAULT_CHROME_SCRIPTS: tuple[str, ...] = tuple(
-    name for name in CHROME_SCRIPTS if name != "hairline.fix"
+    name for name in CHROME_SCRIPTS if name not in OPTIONAL_CHROME_SCRIPTS
 )
 
 
@@ -243,7 +253,6 @@ def backup_chrome_binary_if_needed() -> None:
             )
             sys.exit(1)
     shutil.move(CHROME_BINARY, chrome_real)
-
 
 
 def install_chrome_binary_wrapper(flags: list[str]) -> None:

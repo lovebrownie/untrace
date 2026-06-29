@@ -4,7 +4,11 @@ from untrace import chromedriver_patch
 def test_patch_chromedriver_binary_replaces_cdc_block(tmp_path):
     driver = tmp_path / "chromedriver"
     injection = b"{window.cdc_adoQpoasnfa76pfcZLmcfl_Array = window.Array;};"
-    original = b"prefix" + injection + b"suffix"
+    original = (
+        b"prefix"
+        + injection
+        + b"enable-automation\x00test-type=webdriver\x00suffix"
+    )
     driver.write_bytes(original)
     driver.chmod(0o755)
 
@@ -12,6 +16,8 @@ def test_patch_chromedriver_binary_replaces_cdc_block(tmp_path):
     patched = driver.read_bytes()
     assert chromedriver_patch.PATCH_MARKER in patched
     assert b"window.cdc_" not in patched
+    assert b"enable-automation" not in patched
+    assert b"disable-automatio" in patched
     assert chromedriver_patch.backup_path(driver).is_file()
     assert chromedriver_patch.patch_chromedriver_binary(driver) is True
 
@@ -27,7 +33,11 @@ def test_patch_chromedriver_binary_returns_false_without_block(tmp_path):
 def test_unpatch_chromedriver_binary_restores_backup(tmp_path):
     driver = tmp_path / "chromedriver"
     injection = b"{window.cdc_adoQpoasnfa76pfcZLmcfl_Array = window.Array;};"
-    original = b"prefix" + injection + b"suffix"
+    original = (
+        b"prefix"
+        + injection
+        + b"enable-automation\x00test-type=webdriver\x00suffix"
+    )
     driver.write_bytes(original)
     driver.chmod(0o755)
 

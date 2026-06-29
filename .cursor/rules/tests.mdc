@@ -32,7 +32,8 @@ One **root** install (`sudo python -m untrace --install --stealth --flags --chro
 
 ## When a bot / Akamai test fails
 
-- **`crateandbarrel.com` “Access Denied” is a stealth/detection failure — not IP, not session reputation, not “wait and retry”.** Do not suggest cooldowns, VPNs, burned IPs, or rate limits as the cause or fix. The site loads fine in a real browser; if Selenium gets blocked, untrace is leaking something — fix the wrapper, extension, or chromedriver patch until `test_bot_akamai_loads` passes.
+- **Akamai bot pages (`test_bot_akamai_loads`, e.g. `hilton.com`) showing “Access Denied”, “Something went wrong”, or similar block/error copy is a stealth/detection failure — not “wait and retry”.** The site loads fine in a real browser; if Selenium gets blocked, untrace is leaking something — fix the wrapper, extension, or chromedriver patch until `test_bot_akamai_loads` passes.
+- Browser tests use Selenium `WebDriverWait` (30s max) for page/content readiness — no fixed `time.sleep` polling.
 - Fix in this order: Chrome wrapper (strip chromedriver junk, apply launcher flags on **both** manual and automation paths), chromedriver CDC patch, extension script set — never the test file.
 
 ## Code quality

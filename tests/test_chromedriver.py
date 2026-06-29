@@ -94,8 +94,13 @@ def test_bot_sannysoft_loads(chrome_driver):
     _assert_page_loaded(chrome_driver)
 
 
+AKAMAI_TEST_URL = (
+    "https://www.crateandbarrel.com/keane-32-weathered-natural-solid-wood-charging-nightstand/s307077"
+)
+
+
 def test_bot_akamai_loads(chrome_driver):
-    chrome_driver.get("https://www.crateandbarrel.com/")
+    chrome_driver.get(AKAMAI_TEST_URL)
     time.sleep(PAGE_LOAD_WAIT)
     _assert_page_loaded(chrome_driver)
 

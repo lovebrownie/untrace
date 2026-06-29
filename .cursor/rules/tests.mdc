@@ -23,8 +23,8 @@ One **root** install (`sudo python -m untrace --install --stealth --flags --chro
 
 ## Browser integration tests (`tests/test_chromedriver.py`)
 
-- **`chrome_driver` is hands-off.** `tests/conftest.py` must stay minimal: `webdriver.Chrome(options=Options())`, yield, quit. Do **not** touch it unless the user explicitly asks.
-- **Never add to `chrome_driver` or conftest:** pytest CLI options (`--headless`, etc.), `os.environ` / `SE_CHROME_BINARY` / `PATH` hacks, extra Chrome args, custom capabilities, service config, retries, screenshots, logging, or “just in case” fixture logic.
+- **`chrome_driver` is hands-off.** `tests/conftest.py` stays minimal: `webdriver.Chrome(options=Options())`, yield, quit. The only allowed toggle is the `HEADLESS` module variable (`False` by default; when `True`, pass `--headless=new`). Do **not** add anything else unless the user explicitly asks.
+- **Never add to `chrome_driver` or conftest:** pytest CLI options, `os.environ` / `SE_CHROME_BINARY` / `PATH` hacks, extra Chrome args beyond `HEADLESS`, custom capabilities, service config, retries, screenshots, logging, or “just in case” fixture logic.
 - If a bot test fails, fix untrace (wrapper, extension, chromedriver patch) — **not** `chrome_driver`.
 - Run: `pytest tests/test_chromedriver.py`
 - Stealth, flags, extension seeding, chromedriver arg stripping, and CDC patch come from the **installed untrace** stack.

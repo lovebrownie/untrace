@@ -5,11 +5,15 @@ from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 
 PAGE_LOAD_WAIT = 15
+HEADLESS = False
 
 
 @pytest.fixture
 def chrome_driver():
-    driver = webdriver.Chrome(options=Options())
+    options = Options()
+    if HEADLESS:
+        options.add_argument("--headless=new")
+    driver = webdriver.Chrome(options=options)
     try:
         yield driver
     finally:

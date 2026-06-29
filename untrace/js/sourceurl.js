@@ -12,19 +12,17 @@
   }
 
   const nativeGet = nativeStackDesc.get
-  Object.defineProperty(Error.prototype, 'stack', {
-    ...nativeStackDesc,
-    get() {
-      let stack = nativeGet.call(this)
-      if (!stack || !STACK_MARKER_RE.test(stack)) {
-        return stack
-      }
+  const stackGet = function stack() {
+    let stack = nativeGet.call(this)
+    if (!stack || !STACK_MARKER_RE.test(stack)) {
       return stack
-        .split('\n')
-        .filter((line) => !STACK_MARKER_RE.test(line))
-        .join('\n')
-        .replace(MARKER_RE, '')
-        .trimEnd()
     }
-  })
+    return stack
+      .split('\n')
+      .filter((line) => !STACK_MARKER_RE.test(line))
+      .join('\n')
+      .replace(MARKER_RE, '')
+      .trimEnd()
+  }
+  utils.replaceGetter(Error.prototype, 'stack', stackGet)
 }

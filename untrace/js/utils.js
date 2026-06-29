@@ -189,27 +189,42 @@
    * @param {object} obj - The object for which to modify the `toString()` representation
    * @param {string} str - Optional string used as a return value
    */
-  utils.patchToString = (obj, str = '') => {
+  utils._toStringRedirects = utils._toStringRedirects || new Map()
+  utils._toStringOverrides = utils._toStringOverrides || new Map()
+
+  utils._ensureToStringProxy = () => {
+    if (utils._toStringProxyInstalled) {
+      return
+    }
+    utils._toStringProxyInstalled = true
     utils.preloadCache()
 
-    const toStringProxy = new Proxy(Function.prototype.toString, {
+    const nativeToString = Function.prototype.toString
+    const toStringProxy = new Proxy(nativeToString, {
       apply: function (target, ctx) {
-        // This fixes e.g. `HTMLMediaElement.prototype.canPlayType.toString + ""`
         if (ctx === Function.prototype.toString) {
           return utils.makeNativeString('toString')
         }
-        // `toString` targeted at our proxied Object detected
-        if (ctx === obj) {
-          // We either return the optional string verbatim or derive the most desired result automatically
-          return str || utils.makeNativeString(obj.name)
+        if (utils._toStringOverrides.has(ctx)) {
+          const str = utils._toStringOverrides.get(ctx)
+          return str || utils.makeNativeString(ctx.name)
         }
-        // Check if the toString protype of the context is the same as the global prototype,
-        // if not indicates that we are doing a check across different windows., e.g. the iframeWithdirect` test case
+        if (utils._toStringRedirects.has(ctx)) {
+          const originalObj = utils._toStringRedirects.get(ctx)
+          const fallback = () =>
+            originalObj && originalObj.name
+              ? utils.makeNativeString(originalObj.name)
+              : utils.makeNativeString(ctx.name)
+          try {
+            return originalObj + '' || fallback()
+          } catch (_) {
+            return fallback()
+          }
+        }
         const hasSameProto = Object.getPrototypeOf(
           Function.prototype.toString
         ).isPrototypeOf(ctx.toString) // eslint-disable-line no-prototype-builtins
         if (!hasSameProto) {
-          // Pass the call on to the local Function.prototype.toString instead
           return ctx.toString()
         }
         return target.call(ctx)
@@ -218,6 +233,12 @@
     utils.replaceProperty(Function.prototype, 'toString', {
       value: toStringProxy
     })
+  }
+
+  utils.patchToString = (obj, str = '') => {
+    utils.preloadCache()
+    utils._toStringOverrides.set(obj, str)
+    utils._ensureToStringProxy()
   }
 
   /**
@@ -237,41 +258,34 @@
    */
   utils.redirectToString = (proxyObj, originalObj) => {
     utils.preloadCache()
+    utils._toStringRedirects.set(proxyObj, originalObj)
+    utils._ensureToStringProxy()
+  }
 
-    const toStringProxy = new Proxy(Function.prototype.toString, {
-      apply: function (target, ctx) {
-        // This fixes e.g. `HTMLMediaElement.prototype.canPlayType.toString + ""`
-        if (ctx === Function.prototype.toString) {
-          return utils.makeNativeString('toString')
-        }
-
-        // `toString` targeted at our proxied Object detected
-        if (ctx === proxyObj) {
-          const fallback = () =>
-            originalObj && originalObj.name
-              ? utils.makeNativeString(originalObj.name)
-              : utils.makeNativeString(proxyObj.name)
-
-          // Return the toString representation of our original object if possible
-          return originalObj + '' || fallback()
-        }
-
-        // Check if the toString protype of the context is the same as the global prototype,
-        // if not indicates that we are doing a check across different windows., e.g. the iframeWithdirect` test case
-        const hasSameProto = Object.getPrototypeOf(
-          Function.prototype.toString
-        ).isPrototypeOf(ctx.toString) // eslint-disable-line no-prototype-builtins
-        if (!hasSameProto) {
-          // Pass the call on to the local Function.prototype.toString instead
-          return ctx.toString()
-        }
-
-        return target.call(ctx)
-      }
+  /**
+   * Replace a property getter and keep its toString() looking native.
+   *
+   * @param {object} obj
+   * @param {string} propName
+   * @param {Function} getFn
+   * @param {object} [descriptorOverrides]
+   */
+  utils.replaceGetter = (obj, propName, getFn, descriptorOverrides = {}) => {
+    const desc = Object.getOwnPropertyDescriptor(obj, propName) || {}
+    const nativeGet = desc.get
+    utils.replaceProperty(obj, propName, {
+      ...desc,
+      get: getFn,
+      set: descriptorOverrides.set ?? desc.set ?? (() => undefined),
+      configurable: descriptorOverrides.configurable ?? true,
+      enumerable: descriptorOverrides.enumerable ?? desc.enumerable ?? true,
+      ...descriptorOverrides
     })
-    utils.replaceProperty(Function.prototype, 'toString', {
-      value: toStringProxy
-    })
+    if (typeof nativeGet === 'function') {
+      utils.redirectToString(getFn, nativeGet)
+    } else {
+      utils.patchToString(getFn)
+    }
   }
 
   /**

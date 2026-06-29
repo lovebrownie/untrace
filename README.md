@@ -2,15 +2,16 @@
 
 Untrace makes Chrome automation harder to detect. Install once, then use normal Chrome or bare Selenium — no per-script options, no test-side hacks.
 
-Three optional layers, toggled independently:
+Four optional layers, toggled independently:
 
 | Layer | Flag | What it does |
 |-------|------|-------------|
 | **Stealth** | `--stealth` | MV3 extension — injects scripts at `document_start` in the `MAIN` world on every frame |
 | **Chrome wrapper** | `--flags` | Replaces the `chrome` binary with a bash script in front of `chrome_real`. Strips chromedriver junk flags, applies launcher flags, seeds the extension into profiles. Manual launches get a **random profile** only when `--flags` is on |
 | **Chromedriver patch** | `--chromedriver` | Neutralizes the CDC (`window.cdc_*`) injection in cached chromedriver binaries (restored from `.untrace.bak` on uninstall) |
+| **Selenium-manager patch** | `--chromedriver` (with deploy/install) | Points Selenium's `selenium-manager` at the user Chrome wrapper so `webdriver.Chrome()` uses untrace automatically |
 
-Bare `--install` or `--deploy` (no flags) enables all three.
+Bare `--install` or `--deploy` (no flags) enables all three feature flags (`--stealth`, `--flags`, `--chromedriver`).
 
 ## Quick start
 
@@ -39,6 +40,7 @@ Active untrace root: /home/you/.local/share/untrace
 ✓ Flags
 ✓ Chrome wrapper
 ✓ Chromedriver patch
+✓ Selenium-manager patch
 ```
 
 **Uninstall** — removes everything: restores system Chrome, deletes `/etc/untrace` and `~/.local/share/untrace` (via `SUDO_USER`), unpatches chromedrivers:
@@ -62,7 +64,7 @@ Each flag only enables its own layer. Combine as needed:
 
 - **`--stealth`** — extension only. Stock Chrome binary, normal profile, no chromedriver patch.
 - **`--flags`** — patches Chrome (`chrome` → wrapper script, real binary → `chrome_real`). Random `--user-data-dir` on manual launches. No extension unless `--stealth` is also passed.
-- **`--chromedriver`** — patches/unpatches Selenium's cached chromedriver binaries only.
+- **`--chromedriver`** — patches/unpatches Selenium's cached chromedriver binaries and selenium-manager wrappers.
 
 Passing a flag off on reinstall disables that layer (e.g. `--install --stealth` unpatches chromedrivers and removes the Chrome wrapper if it was there).
 
@@ -101,6 +103,14 @@ pytest tests/test_chromedriver.py
 
 Requires a prior `python -m untrace --deploy --stealth --flags --chromedriver` (or `--install`). `chrome_driver` in `tests/conftest.py` is intentionally minimal — fix failures in untrace, not the fixture.
 
+| Test | Target |
+|------|--------|
+| `test_bot_sannysoft_loads` | [bot.sannysoft.com](https://bot.sannysoft.com/) |
+| `test_bot_rebrowser_detector_clean` | [rebrowser-bot-detector](https://bot-detector.rebrowser.net/) — `runtimeEnableLeak` and `navigatorWebdriver` must pass |
+| `test_bot_akamai_loads` | [hilton.com](https://www.hilton.com/en/) — Akamai BMP behavioral challenge |
+| `test_fpscanner_demo_loads` | [fpscanner.com/demo](https://fpscanner.com/demo/) |
+| `test_untrace_extension_listed_on_chrome_extensions` | `chrome://extensions/` |
+
 ## Custom scripts
 
 Edit `custom.js` in the active untrace root, then re-run install or deploy:
@@ -115,23 +125,24 @@ Default stealth scripts live in `untrace/js/`. Enable or disable via `DEFAULT_CH
 
 | Script | What it does |
 |--------|--------------|
-| `utils.js` | Shared proxy helpers (runs first) |
-| `navigator.userAgent.js` | Strips `HeadlessChrome` from UA |
+| `utils.js` | Shared stealth helpers (`replaceGetter`, chained `toString` redirects) — runs first |
+| `navigator.userAgent.js` | Strips `HeadlessChrome`, aligns UA/Client Hints (`uaFullVersion`, `platformVersion`, …) |
 | `navigator.headless.js` | Forces `navigator.headless` to false |
-| `cdp.js` | Hides CDP-related leaks |
+| `cdp.js` | Mitigates CDP `Runtime.Enable` leak via stealthed `console.*` proxies (never reads `Error.stack`) |
 | `akamai.js` | Scrubs CDC/window automation artifacts |
-| `sourceurl.js` | Fixes `//# sourceURL` detection |
-| `navigator.webdriver.js` | Sets `navigator.webdriver` to false |
-| `iframe.contentWindow.js` | Fixes iframe `contentWindow` probes |
-| `iframe.webdriver.js` | Patches webdriver inside iframes |
+| `sourceurl.js` | Sanitizes `Error.stack` chromedriver evaluation markers |
+| `navigator.webdriver.js` | Native-looking getter returning `false` |
+| `iframe.webdriver.js` | Keeps `navigator.webdriver` false in iframes (no `contentWindow` Proxy) |
 | `navigator.languages.js` | Sets `navigator.languages` |
 | `navigator.vendor.js` | Sets `navigator.vendor` |
 | `webgl.vendor.js` | Spoofs WebGL vendor/renderer |
 | `window.outerdimensions.js` | Realistic `outerWidth` / `outerHeight` |
-| `cleanup.js` | Removes transient automation markers |
+| `cleanup.js` | Removes the `utils` global after injection |
 | `custom.js` | Your hooks (runs last) |
 
-Optional (off by default): `navigator.plugins`, `navigator.permissions`, `media.codecs`, `chrome.app`, `chrome.runtime`, `chrome.csi`, `chrome.loadTimes`, `hairline.fix`.
+Optional (off by default): `iframe.contentWindow`, `navigator.plugins`, `navigator.permissions`, `media.codecs`, `chrome.app`, `chrome.runtime`, `chrome.csi`, `chrome.loadTimes`, `hairline.fix`.
+
+> `iframe.contentWindow.js` is optional because its `document.createElement` hook can trip Akamai BMP on protected sites. Enable only if you need the srcdoc iframe fix.
 
 ## Project layout
 
@@ -140,6 +151,7 @@ untrace/
   __main__.py            CLI, Chrome wrapper, script catalog
   injector.py            Extension build, profile seeding
   chromedriver_patch.py  CDC patch / unpatch with .untrace.bak
+  selenium_manager_patch.py  Patch selenium-manager to use the Chrome wrapper
   config.py              Persisted feature flags per root
   js/                    Stealth injection sources
 tests/

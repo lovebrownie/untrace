@@ -1,4 +1,4 @@
-// Selenium / chromedriver leak cleanup and Akamai 3PM service-worker neutralization.
+// Selenium / chromedriver leak cleanup for Akamai-protected pages.
 
 () => {
   const LEAK_RE =
@@ -31,8 +31,6 @@
     '__pwInitScripts',
     '__playwright__binding__'
   ])
-
-  const AKAMAI_SW_RE = /akam-sw|akamai|\/3pm|3pm-sw-policy/i
 
   const scrubObject = (obj) => {
     if (!obj) return
@@ -68,50 +66,11 @@
     }
   }
 
-  const blockAkamaiServiceWorker = () => {
-    const sw = navigator.serviceWorker
-    if (!sw || sw.__untraceAkamBlock) {
-      return
-    }
-    const nativeRegister = sw.register?.bind(sw)
-    if (typeof nativeRegister !== 'function') {
-      return
-    }
-    const wrapped = function (scriptURL, options) {
-      const url = String(scriptURL)
-      if (AKAMAI_SW_RE.test(url)) {
-        return Promise.reject(
-          new DOMException('Registration failed.', 'SecurityError')
-        )
-      }
-      return nativeRegister.call(this, scriptURL, options)
-    }
-    if (typeof utils !== 'undefined' && utils.replaceProperty) {
-      utils.replaceProperty(sw, 'register', {
-        value: wrapped,
-        writable: true,
-        configurable: true
-      })
-    } else {
-      try {
-        sw.register = wrapped
-      } catch (_) {}
-    }
-    sw.__untraceAkamBlock = true
-  }
-
   scrubLeaks()
-  blockAkamaiServiceWorker()
-  queueMicrotask(() => {
-    scrubLeaks()
-    blockAkamaiServiceWorker()
-  })
+  queueMicrotask(scrubLeaks)
   document.addEventListener(
     'DOMContentLoaded',
-    () => {
-      scrubLeaks()
-      blockAkamaiServiceWorker()
-    },
+    scrubLeaks,
     { once: true }
   )
   setInterval(scrubLeaks, 50)

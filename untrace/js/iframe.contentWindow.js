@@ -70,26 +70,16 @@
     const addIframeCreationSniffer = () => {
       /* global document */
       const createElement = {
-        // Make toString() native
-        get(target, key) {
-          return Reflect.get(target, key)
-        },
         apply: function (target, thisArg, args) {
           const isIframe =
             args && args.length && `${args[0]}`.toLowerCase() === 'iframe'
           if (!isIframe) {
-            // Everything as usual
             return target.apply(thisArg, args)
-          } else {
-            return handleIframeCreation(target, thisArg, args)
           }
+          return handleIframeCreation(target, thisArg, args)
         }
       }
-      // All this just due to iframes with srcdoc bug
-      document.createElement = new Proxy(
-        document.createElement,
-        createElement
-      )
+      utils.replaceWithProxy(document, 'createElement', createElement)
     }
 
     // Let's go

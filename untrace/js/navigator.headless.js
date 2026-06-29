@@ -6,10 +6,7 @@
   if (!('headless' in navigator)) {
     return
   }
-  utils.replaceProperty(proto, 'headless', {
-    get: () => false,
-    set: () => undefined,
-    configurable: true,
-    enumerable: true,
+  utils.replaceGetter(proto, 'headless', function headless() {
+    return false
   })
 }

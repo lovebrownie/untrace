@@ -6,7 +6,13 @@ alwaysApply: true
 
 # Untrace
 
-One **root** install (`sudo python -m untrace --install --stealth --flags`) wires the Chrome wrapper — do this once. After that, update the extension and chromedriver with **no password**: `python -m untrace --deploy --stealth --flags` (also runs automatically before `test_chromedriver` tests). Fix the wrapper, extension, and chromedriver — not the caller.
+One **root** install (`sudo python -m untrace --install --stealth --flags --chromedriver`) wires the Chrome wrapper — do this once. After that, update with **no password**: `python -m untrace --deploy --stealth --flags --chromedriver` (also runs automatically before `test_chromedriver` tests). Fix the wrapper, extension, and chromedriver — not the caller.
+
+## Install / uninstall
+
+- Feature flags are independent: `--stealth` (extension), `--flags` (Chrome wrapper + random profile), `--chromedriver` (CDC patch). Bare `--install` / `--deploy` enables all.
+- **`sudo --uninstall` must remove everything** — system Chrome wrapper (`chrome_real` restore), `/etc/untrace`, **and** user deploy at `~/.local/share/untrace` for `SUDO_USER` (not just `/root`). Unpatch chromedrivers. Never leave user deploy behind with a “not removed” note.
+- Commands run under `sudo` must resolve the real user’s home via `SUDO_USER` / `injector.user_deploy_roots()` — not `Path.home()` as root.
 
 ## No workarounds
 
@@ -22,7 +28,7 @@ One **root** install (`sudo python -m untrace --install --stealth --flags`) wire
 - If a bot test fails, fix untrace (wrapper, extension, chromedriver patch) — **not** `chrome_driver`.
 - Run: `pytest tests/test_chromedriver.py`
 - Stealth, flags, extension seeding, chromedriver arg stripping, and CDC patch come from the **installed untrace** stack.
-- `tests/test_chromedriver.py` auto-runs `python -m untrace --deploy --stealth --flags` before its tests — never use `pkexec`/`sudo` for routine test iteration.
+- `tests/test_chromedriver.py` auto-runs `python -m untrace --deploy --stealth --flags --chromedriver` before its tests — never use `pkexec`/`sudo` for routine test iteration.
 
 ## When a bot / Akamai test fails
 

@@ -17,7 +17,7 @@ One **root** install (`sudo python -m untrace --install --stealth --flags --chro
 ## No workarounds
 
 - Do **not** split behavior (e.g. stealth only for Selenium, flags-only for manual, automation-only extension, separate code paths “because manual is different”).
-- Do **not** punt with excuses (IP reputation, “Akamai is intermittent”, “can’t fix without test options”) when a test fails — keep fixing untrace until it passes.
+- Do **not** punt with excuses (“Akamai is intermittent”, “can’t fix without test options”) when a test fails — keep fixing untrace until it passes.
 - Do **not** add test-side Chrome flags/options to hide a failure.
 - Do **not** add one-off CLI band-aids instead of fixing install/wrapper/extension.
 
@@ -32,7 +32,8 @@ One **root** install (`sudo python -m untrace --install --stealth --flags --chro
 
 ## When a bot / Akamai test fails
 
-Fix in this order: Chrome wrapper (strip chromedriver junk, apply launcher flags on **both** manual and automation paths), chromedriver CDC patch, extension script set — never the test file.
+- **`crateandbarrel.com` “Access Denied” is a stealth/detection failure — not IP, not session reputation, not “wait and retry”.** Do not suggest cooldowns, VPNs, burned IPs, or rate limits as the cause or fix. The site loads fine in a real browser; if Selenium gets blocked, untrace is leaking something — fix the wrapper, extension, or chromedriver patch until `test_bot_akamai_loads` passes.
+- Fix in this order: Chrome wrapper (strip chromedriver junk, apply launcher flags on **both** manual and automation paths), chromedriver CDC patch, extension script set — never the test file.
 
 ## Code quality
 

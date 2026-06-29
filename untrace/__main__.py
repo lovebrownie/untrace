@@ -13,13 +13,15 @@ import sys
 import tempfile
 from pathlib import Path
 
-from untrace import chromedriver_patch, config, injector
+from untrace import chromedriver_patch, config, injector, selenium_manager_patch
 
 IS_WINDOWS = platform.system() == "Windows"
 
 CHROMEDRIVER_STRIP_FLAGS: tuple[str, ...] = (
     "--enable-automation",
+    "--disable-automatio",
     "--test-type=webdriver",
+    "--use-mock-keychain",
     "--allow-pre-commit-input",
     "--disable-background-networking",
     "--disable-background-timer-throttling",
@@ -201,7 +203,7 @@ AUTOMATION_DETECT_BASH = """
 UNTRACE_AUTOMATION=0
 for arg in "$@"; do
   case "$arg" in
-    --remote-debugging-port*|--test-type=webdriver|--enable-automation)
+    --remote-debugging-port*|--test-type=webdriver|--test-type=webbrowse|--enable-automation|--disable-automatio)
       UNTRACE_AUTOMATION=1
       break
       ;;
@@ -525,10 +527,16 @@ def _apply_chromedriver_patch(cfg: dict) -> None:
         patched = chromedriver_patch.patch_all_chromedrivers()
         if patched:
             print(f"Patched {len(patched)} chromedriver binary(s).")
+        sm_patched = selenium_manager_patch.patch_all_selenium_managers()
+        if sm_patched:
+            print(f"Patched {len(sm_patched)} selenium-manager binary(s).")
     else:
         unpatched = chromedriver_patch.unpatch_all_chromedrivers()
         if unpatched:
             print(f"Unpatched {len(unpatched)} chromedriver binary(s).")
+        sm_unpatched = selenium_manager_patch.unpatch_all_selenium_managers()
+        if sm_unpatched:
+            print(f"Unpatched {len(sm_unpatched)} selenium-manager binary(s).")
 
 
 def _disable_stealth_at_roots(cfg: dict, roots: list[Path]) -> None:
@@ -782,6 +790,9 @@ def uninstall_linux():
     unpatched_drivers = chromedriver_patch.unpatch_all_chromedrivers()
     if unpatched_drivers:
         print(f"Unpatched {len(unpatched_drivers)} chromedriver(s).")
+    unpatched_managers = selenium_manager_patch.unpatch_all_selenium_managers()
+    if unpatched_managers:
+        print(f"Unpatched {len(unpatched_managers)} selenium-manager(s).")
     print("Uninstalled.")
 
 

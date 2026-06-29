@@ -10,9 +10,11 @@ PATCH_MARKER = b"untrace chromedriver"
 CDC_INJECTION_RE = re.compile(rb"\{window\.cdc.*?;\}")
 BACKUP_SUFFIX = ".untrace.bak"
 
+_BINARY_NOP = b" "
+
 BINARY_STRING_PATCHES: tuple[tuple[bytes, bytes], ...] = (
-    (b"enable-automation", b"disable-automatio"),
-    (b"test-type=webdriver", b"test-type=webbrowse"),
+    (b"enable-automation", _BINARY_NOP * len(b"enable-automation")),
+    (b"test-type=webdriver", _BINARY_NOP * len(b"test-type=webdriver")),
 )
 
 

@@ -1,70 +1,65 @@
 // Mitigate Runtime.Enable CDP leak — never pass Error objects to native console APIs.
 
 () => {
-  const stringifyError = (err) => {
-    const saved = Error.prepareStackTrace
-    Error.prepareStackTrace = undefined
-    try {
-      const message = err.message || 'Error'
-      const stack = err.stack || ''
-      if (!stack) {
-        return message
-      }
-      return stack.includes(message) ? stack : `${message}\n${stack}`
-    } finally {
-      if (saved !== undefined) {
-        Error.prepareStackTrace = saved
-      }
+  utils.preloadCache()
+
+  // Reading err.stack lets CDP Runtime.Enable detection increment stackLookupCount.
+  const safeErrorText = (err) => {
+    if (!err || typeof err !== 'object') {
+      return String(err)
     }
+    return typeof err.message === 'string' && err.message ? err.message : 'Error'
   }
 
   const mapArgs = (args) =>
-    args.map((arg) => (arg instanceof Error ? stringifyError(arg) : arg))
+    args.map((arg) => (arg instanceof Error ? safeErrorText(arg) : arg))
 
-  const install = () => {
-    if (!globalThis.console) {
-      return
-    }
-    for (const name of [
-      'log',
-      'debug',
-      'info',
-      'warn',
-      'error',
-      'trace',
-      'dir',
-      'dirxml',
-      'assert'
-    ]) {
-      const current = console[name]
-      if (typeof current !== 'function' || current.__untraceCdpWrapped) {
-        continue
-      }
-      const bound = current.bind(console)
-      const wrapped = function (...args) {
-        return bound(...mapArgs(args))
-      }
-      wrapped.__untraceCdpWrapped = true
-      try {
-        console[name] = wrapped
-      } catch (_) {
-        try {
-          Object.defineProperty(console, name, {
-            value: wrapped,
-            writable: true,
-            configurable: true
-          })
-        } catch (_) {}
-      }
+  const consoleHandler = {
+    apply(target, thisArg, args) {
+      return Reflect.apply(target, thisArg, mapArgs(args))
     }
   }
 
-  install()
-  queueMicrotask(install)
-  setTimeout(install, 0)
-  setInterval(install, 100)
+  for (const name of [
+    'log',
+    'debug',
+    'info',
+    'warn',
+    'error',
+    'trace',
+    'dir',
+    'dirxml',
+    'assert'
+  ]) {
+    if (!globalThis.console || typeof console[name] !== 'function') {
+      continue
+    }
+    try {
+      utils.replaceWithProxy(console, name, consoleHandler)
+    } catch (_) {}
+  }
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', install, { once: true })
+  const contextHandler = {
+    apply(target, thisArg, args) {
+      const ctx = Reflect.apply(target, thisArg, args)
+      if (!ctx || typeof ctx !== 'object') {
+        return ctx
+      }
+      for (const name of ['debug', 'log', 'info', 'warn', 'error', 'trace']) {
+        if (typeof ctx[name] !== 'function') {
+          continue
+        }
+        try {
+          utils.replaceWithProxy(ctx, name, consoleHandler)
+        } catch (_) {}
+      }
+      return ctx
+    }
+  }
+
+  if (typeof console.context === 'function') {
+    try {
+      utils.replaceWithProxy(console, 'context', contextHandler)
+    } catch (_) {}
   }
 }

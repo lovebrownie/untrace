@@ -5,24 +5,18 @@
 
   const windowFrame = 85
   if (!window.outerWidth || window.outerWidth === window.innerWidth) {
-    utils.replaceProperty(window, 'outerWidth', {
-      get: () => window.innerWidth,
-      configurable: true,
-      enumerable: true,
+    utils.replaceGetter(window, 'outerWidth', function outerWidth() {
+      return window.innerWidth
     })
-    utils.replaceProperty(window, 'outerHeight', {
-      get: () => window.innerHeight + windowFrame,
-      configurable: true,
-      enumerable: true,
+    utils.replaceGetter(window, 'outerHeight', function outerHeight() {
+      return window.innerHeight + windowFrame
     })
   }
 
   const screenProto = Object.getPrototypeOf(screen)
   const patchScreen = (prop, value) => {
-    utils.replaceProperty(screenProto, prop, {
-      get: () => value,
-      configurable: true,
-      enumerable: true,
+    utils.replaceGetter(screenProto, prop, function screenDimension() {
+      return value
     })
   }
 

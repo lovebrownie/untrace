@@ -1,6 +1,10 @@
+import time
+
 import pytest
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+
+POST_TEST_DELAY = 20
 
 HEADLESS = False
 
@@ -15,4 +19,5 @@ def chrome_driver():
     try:
         yield driver
     finally:
+        time.sleep(POST_TEST_DELAY)
         driver.quit()

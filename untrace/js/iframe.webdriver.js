@@ -1,37 +1,8 @@
-// Keep navigator.webdriver false inside iframes (sync reads via contentWindow).
+// Keep navigator.webdriver false inside iframes without Proxy-wrapping contentWindow.
 
 () => {
   utils.preloadCache()
-
-  const proxyNavigator = (nav) => {
-    if (!nav) {
-      return nav
-    }
-    return new Proxy(nav, {
-      get(target, key) {
-        if (key === 'webdriver') {
-          return false
-        }
-        const value = Reflect.get(target, key)
-        return typeof value === 'function' ? value.bind(target) : value
-      }
-    })
-  }
-
-  const proxyContentWindow = (win) => {
-    if (!win) {
-      return win
-    }
-    return new Proxy(win, {
-      get(target, key) {
-        if (key === 'navigator') {
-          return proxyNavigator(Reflect.get(target, 'navigator'))
-        }
-        const value = Reflect.get(target, key)
-        return typeof value === 'function' ? value.bind(target) : value
-      }
-    })
-  }
+  const replaceGetter = utils.replaceGetter
 
   const patchNavigator = (nav) => {
     if (!nav) {
@@ -42,11 +13,8 @@
     if (desc && typeof desc.get === 'function' && nav.webdriver === false) {
       return
     }
-    utils.replaceProperty(proto, 'webdriver', {
-      get: () => false,
-      set: () => undefined,
-      configurable: true,
-      enumerable: true,
+    replaceGetter(proto, 'webdriver', function webdriver() {
+      return false
     })
   }
 
@@ -63,12 +31,10 @@
   const contentWindowDesc = Object.getOwnPropertyDescriptor(iframeProto, 'contentWindow')
   if (contentWindowDesc && typeof contentWindowDesc.get === 'function') {
     const nativeGet = contentWindowDesc.get
-    utils.replaceProperty(iframeProto, 'contentWindow', {
-      get() {
-        return proxyContentWindow(nativeGet.call(this))
-      },
-      configurable: true,
-      enumerable: true,
+    replaceGetter(iframeProto, 'contentWindow', function contentWindow() {
+      const win = nativeGet.call(this)
+      patchWindow(win)
+      return win
     })
   }
 

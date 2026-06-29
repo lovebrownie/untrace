@@ -91,6 +91,7 @@ OPTIONAL_CHROME_SCRIPTS: frozenset[str] = frozenset(
         "chrome.runtime",
         "chrome.csi",
         "chrome.loadTimes",
+        "iframe.contentWindow",
     }
 )
 DEFAULT_CHROME_SCRIPTS: tuple[str, ...] = tuple(
@@ -98,11 +99,39 @@ DEFAULT_CHROME_SCRIPTS: tuple[str, ...] = tuple(
 )
 
 
+def _chrome_full_version() -> str | None:
+    try:
+        out = subprocess.check_output(
+            [chrome_real_binary(), "--version"],
+            text=True,
+            stderr=subprocess.STDOUT,
+            timeout=5,
+        )
+    except subprocess.SubprocessError, OSError:
+        return None
+    parts = out.strip().split()
+    return parts[-1] if len(parts) >= 3 else None
+
+
+def _chrome_user_agent_flag() -> str | None:
+    version = _chrome_full_version()
+    if not version:
+        return None
+    ua = (
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+        f"(KHTML, like Gecko) Chrome/{version} Safari/537.36"
+    )
+    return f"--user-agent={ua}"
+
+
 def chrome_launch_flags() -> list[str]:
     cfg = config.load()
     flags: list[str] = []
     if cfg.get("chrome_flags", True):
         flags.extend(CHROME_FLAGS[name] for name in DEFAULT_CHROME_FLAGS)
+        ua_flag = _chrome_user_agent_flag()
+        if ua_flag:
+            flags.append(ua_flag)
     if cfg.get("js_injection", True):
         flags.extend(injector.extension_launch_flags())
     return flags

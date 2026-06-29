@@ -22,10 +22,8 @@ def _page_has_content(driver) -> bool:
         return bool(
             driver.execute_script(
                 """
-                if (document.readyState !== 'complete') return false;
-                const title = (document.title || '').trim();
                 const body = (document.body && document.body.innerText || '').trim();
-                return title.length > 0 || body.length > 0;
+                return body.length > 30;
                 """
             )
         )
@@ -39,7 +37,12 @@ def _wait_for_page_ready(driver) -> None:
 
 def _page_content(driver) -> tuple[str, str]:
     title = (driver.title or "").strip()
-    body = (driver.find_element(By.TAG_NAME, "body").text or "").strip()
+    body = (
+        driver.execute_script(
+            "return (document.body && document.body.innerText || '').trim();"
+        )
+        or ""
+    ).strip()
     return title, body
 
 
@@ -103,6 +106,56 @@ def test_bot_sannysoft_loads(chrome_driver):
 
 AKAMAI_TEST_URL = "https://www.hilton.com/en/"
 
+REBROWSER_TEST_URL = "https://bot-detector.rebrowser.net/"
+
+REBROWSER_REQUIRED_PASS = (
+    "runtimeEnableLeak",
+    "navigatorWebdriver",
+)
+
+
+def _rebrowser_detections(driver) -> list[dict]:
+    return (
+        driver.execute_script(
+            """
+            const el = document.getElementById('detections-json');
+            if (!el || !el.value) return [];
+            try { return JSON.parse(el.value); } catch { return []; }
+            """
+        )
+        or []
+    )
+
+
+def _rebrowser_failures(detections: list[dict]) -> list[str]:
+    by_type = {item["type"]: item for item in detections if item.get("type")}
+    failures: list[str] = []
+    for name in REBROWSER_REQUIRED_PASS:
+        item = by_type.get(name)
+        if not item:
+            failures.append(f"{name} missing from rebrowser detections")
+            continue
+        rating = item.get("rating", 1)
+        if rating >= 0:
+            note = (item.get("note") or "").strip()
+            failures.append(f"{name} failed (rating={rating}, note={note[:160]!r})")
+    return failures
+
+
+def _wait_for_rebrowser_detections(driver) -> list[dict]:
+    def ready(d) -> bool:
+        return not _rebrowser_failures(_rebrowser_detections(d))
+
+    _wait(driver).until(ready)
+    return _rebrowser_detections(driver)
+
+
+def test_bot_rebrowser_detector_clean(chrome_driver):
+    chrome_driver.get(REBROWSER_TEST_URL)
+    detections = _wait_for_rebrowser_detections(chrome_driver)
+    failures = _rebrowser_failures(detections)
+    assert not failures, f"rebrowser-bot-detector failures: {failures}"
+
 
 def test_bot_akamai_loads(chrome_driver):
     chrome_driver.get(AKAMAI_TEST_URL)
@@ -112,7 +165,7 @@ def test_bot_akamai_loads(chrome_driver):
 
 def test_fpscanner_demo_loads(chrome_driver):
     chrome_driver.get("https://fpscanner.com/demo/")
-    _wait(driver).until(
+    _wait(chrome_driver).until(
         EC.text_to_be_present_in_element((By.TAG_NAME, "body"), "Bot Detection")
     )
     _assert_fpscanner_clean(chrome_driver)
@@ -120,7 +173,7 @@ def test_fpscanner_demo_loads(chrome_driver):
 
 def test_untrace_extension_listed_on_chrome_extensions(chrome_driver):
     chrome_driver.get("chrome://extensions/")
-    _wait(driver).until(
+    _wait(chrome_driver).until(
         lambda d: d.execute_script("""
         const manager = document.querySelector('extensions-manager');
         return Boolean(manager && manager.shadowRoot);

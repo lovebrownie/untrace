@@ -10,6 +10,11 @@ PATCH_MARKER = b"untrace chromedriver"
 CDC_INJECTION_RE = re.compile(rb"\{window\.cdc.*?;\}")
 BACKUP_SUFFIX = ".untrace.bak"
 
+BINARY_STRING_PATCHES: tuple[tuple[bytes, bytes], ...] = (
+    (b"enable-automation", b"disable-automatio"),
+    (b"test-type=webdriver", b"test-type=webbrowse"),
+)
+
 
 def _home_dirs_to_search() -> list[Path]:
     homes: list[Path] = []
@@ -73,6 +78,17 @@ def is_patched(content: bytes) -> bool:
     return PATCH_MARKER in content
 
 
+def _apply_binary_string_patches(content: bytes) -> bytes:
+    updated = content
+    for old, new in BINARY_STRING_PATCHES:
+        if len(old) != len(new):
+            raise ValueError(f"patch length mismatch: {old!r} vs {new!r}")
+        if old not in updated:
+            continue
+        updated = updated.replace(old, new)
+    return updated
+
+
 def patch_chromedriver_binary(path: Path | str) -> bool:
     target = Path(path)
     if not target.is_file():
@@ -100,6 +116,7 @@ def patch_chromedriver_binary(path: Path | str) -> bool:
             return False
 
         updated = content.replace(injection, replacement, 1)
+        updated = _apply_binary_string_patches(updated)
         handle.seek(0)
         handle.write(updated)
         handle.truncate()

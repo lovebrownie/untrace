@@ -37,13 +37,17 @@ CHROMEDRIVER_STRIP_FLAGS: tuple[str, ...] = (
     "--disable-blink-features=AutomationControlled",
 )
 
+LAUNCH_FLAGS_FILE = "launch.flags"
+
 CHROME_FLAGS: dict[str, str] = {
     "start-maximized": "--start-maximized",
     "no-default-browser-check": "--no-default-browser-check",
     "no-first-run": "--no-first-run",
     "lang": "--lang=en-US",
+    "accept-lang": "--accept-lang=en-US,en",
     "disable-automation-mode": (
-        "--disable-features=AutomationModeDesktop,AutomationModeAndroid"
+        "--disable-features=AutomationModeDesktop,AutomationModeAndroid,"
+        "AutomationControlled"
     ),
     "remote-allow-origins": "--remote-allow-origins=*",
 }
@@ -98,6 +102,25 @@ def chrome_launch_flags() -> list[str]:
     if cfg.get("js_injection", True):
         flags.extend(injector.extension_launch_flags())
     return flags
+
+
+def write_launch_flags(flags: list[str], root: Path) -> Path:
+    path = root / LAUNCH_FLAGS_FILE
+    root.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(flags) + ("\n" if flags else ""))
+    os.chmod(path, 0o644)
+    return path
+
+
+def _sync_launch_flags(
+    launch_flags: list[str], roots: list[Path] | None = None
+) -> None:
+    targets = roots if roots is not None else _managed_untrace_roots()
+    for root in targets:
+        if root == injector.SYSTEM_UNTRACE_ROOT and os.geteuid() != 0:
+            continue
+        root.mkdir(parents=True, exist_ok=True)
+        write_launch_flags(launch_flags, root)
 
 
 def format_enabled_scripts() -> str:
@@ -230,6 +253,24 @@ _seed_untrace_extension() {
 }
 """
 
+READ_LAUNCH_FLAGS_BASH = """
+_untrace_launch_flags=()
+_read_launch_flags() {
+  local root f line
+  root="$(_resolve_untrace_root)"
+  f="$root/launch.flags"
+  _untrace_launch_flags=()
+  [ -f "$f" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%%#*}"
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [ -n "$line" ] || continue
+    _untrace_launch_flags+=("$line")
+  done < "$f"
+}
+"""
+
 PARSE_USER_DATA_DIR_BASH = """
 _untrace_user_data_dir=""
 _untrace_prev=""
@@ -310,12 +351,11 @@ def chrome_real_binary() -> str:
 
 
 def build_chrome_wrapper_script(
-    flags: list[str],
+    flags: list[str] | None = None,
     *,
     chrome_real: str | None = None,
     random_profile: bool = False,
 ) -> str:
-    flags_str = f" {flags_str}" if (flags_str := " ".join(flags)) else ""
     if chrome_real is None:
         chrome_real_line = (
             f'CHROME_REAL="$(dirname "$(readlink -f "$0")")/{CHROME_REAL_NAME}"'
@@ -326,14 +366,17 @@ def build_chrome_wrapper_script(
     if random_profile:
         manual_branch = f"""{RANDOM_DIR_BASH}
 {STRIP_AUTOMATION_ARGS_BASH}
-  exec -a "$0" "${{_untrace_runner[@]}}" "${{_untrace_filtered[@]}}" --user-data-dir="$RANDOM_DIR" "${{_untrace_headless_extras[@]}}"{flags_str}"""
+  _read_launch_flags
+  exec -a "$0" "${{_untrace_runner[@]}}" "${{_untrace_filtered[@]}}" --user-data-dir="$RANDOM_DIR" "${{_untrace_headless_extras[@]}}" "${{_untrace_launch_flags[@]}}" """
     else:
         manual_branch = """  _seed_untrace_extension "${HOME}/.config/google-chrome"
-  exec -a "$0" "${_untrace_runner[@]}" "$@" """
+  _read_launch_flags
+  exec -a "$0" "${_untrace_runner[@]}" "${_untrace_launch_flags[@]}" "$@" """
 
     return "#!/bin/bash\n" f"{chrome_real_line}\n" + f"""
 {UNTRACE_BEGIN}
 {SEED_EXTENSION_BASH}
+{READ_LAUNCH_FLAGS_BASH}
 {AUTOMATION_DETECT_BASH}
 {HEADLESS_DETECT_BASH}
 {CHROME_RUNNER_BASH}
@@ -341,7 +384,8 @@ if [ "$UNTRACE_AUTOMATION" = "1" ]; then
 {PARSE_USER_DATA_DIR_BASH}
   _seed_untrace_extension "$_untrace_user_data_dir"
 {STRIP_AUTOMATION_ARGS_BASH}
-  exec -a "$0" "${{_untrace_runner[@]}}" "${{_untrace_filtered[@]}}" "${{_untrace_headless_extras[@]}}"{flags_str}
+  _read_launch_flags
+  exec -a "$0" "${{_untrace_runner[@]}}" "${{_untrace_filtered[@]}}" "${{_untrace_headless_extras[@]}}" "${{_untrace_launch_flags[@]}}"
 else
 {manual_branch}
 fi
@@ -522,10 +566,16 @@ def _installed_wrapper_stale() -> list[str]:
     except OSError:
         return issues
 
+    if "_read_launch_flags" not in content:
+        issues.append(
+            "system Chrome wrapper is stale (missing dynamic launch.flags); "
+            "re-run: sudo python -m untrace --install --stealth --flags --chromedriver"
+        )
+
     for line in content.splitlines():
         if "exec " not in line or "CHROME_REAL" not in line:
             continue
-        if "AutomationControlled" in line:
+        if "--disable-blink-features=AutomationControlled" in line:
             issues.append(
                 "wrapper still passes unsupported --disable-blink-features=AutomationControlled; re-run install"
             )
@@ -620,6 +670,7 @@ def deploy_linux(
         injector.remove()
 
     launch_flags = chrome_launch_flags()
+    _sync_launch_flags(launch_flags, injector.user_deploy_roots())
     wrapper = deploy_user_chrome_wrapper(
         launch_flags,
         random_profile=bool(cfg.get("chrome_flags", False)),
@@ -635,6 +686,8 @@ def deploy_linux(
             "Note: system Chrome wrapper not installed; Selenium uses the user wrapper above.",
             file=sys.stderr,
         )
+    for issue in _installed_wrapper_stale():
+        print(f"Warning: {issue}", file=sys.stderr)
 
 
 def install_linux(
@@ -658,6 +711,7 @@ def install_linux(
 
     restore_google_chrome_launcher()
     launch_flags = chrome_launch_flags()
+    _sync_launch_flags(launch_flags)
 
     if cfg.get("chrome_wrapper", True):
         backup_chrome_launcher_if_needed()

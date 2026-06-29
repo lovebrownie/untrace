@@ -1,7 +1,14 @@
 import pytest
 
 from untrace import config, injector
-from untrace.__main__ import CHROME_FLAGS, DEFAULT_CHROME_FLAGS, build_chrome_wrapper_script, chrome_launch_flags
+from untrace.__main__ import (
+    CHROME_FLAGS,
+    DEFAULT_CHROME_FLAGS,
+    LAUNCH_FLAGS_FILE,
+    build_chrome_wrapper_script,
+    chrome_launch_flags,
+    write_launch_flags,
+)
 
 
 @pytest.mark.parametrize(
@@ -97,11 +104,23 @@ def test_chrome_wrapper_seeds_extension_for_selenium():
     assert 'if [ "$UNTRACE_AUTOMATION" = "1" ]; then' in patch
     assert "--enable-automation" in patch
     assert "--disable-background-networking" in patch
-    assert "AutomationModeDesktop,AutomationModeAndroid" in patch
-    assert "AutomationControlled" not in patch.split("exec ")[-1]
+    assert "_read_launch_flags" in patch
+    assert "launch.flags" in patch
+    assert "${_untrace_launch_flags[@]}" in patch
+    assert "AutomationControlled" not in patch
+    assert "--disable-blink-features=AutomationControlled" not in patch
     assert "--disable-blink-features=*" in patch
     assert "--disable-blink-features)" in patch
     assert "--window-size=1920,1080" in patch
     assert "_untrace_wants_headless" in patch
     assert "_untrace_runner" in patch
     assert '_untrace_filtered+=("$arg")' in patch
+
+
+def test_write_launch_flags_persists_flags(tmp_path):
+    flags = [CHROME_FLAGS[name] for name in DEFAULT_CHROME_FLAGS]
+    path = write_launch_flags(flags, tmp_path)
+    assert path.name == LAUNCH_FLAGS_FILE
+    saved = path.read_text().splitlines()
+    assert all(flag in saved for flag in flags)
+    assert "AutomationControlled" in path.read_text()

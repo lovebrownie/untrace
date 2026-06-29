@@ -21,17 +21,6 @@ BLOCKED_MARKERS = (
 )
 
 
-def _chrome_options() -> Options:
-    options = Options()
-    options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    options.add_experimental_option("useAutomationExtension", False)
-    options.add_argument("--disable-blink-features=AutomationControlled")
-    options.add_argument(
-        "--disable-features=AutomationModeDesktop,AutomationModeAndroid"
-    )
-    return options
-
-
 def _page_content(driver) -> tuple[str, str]:
     title = (driver.title or "").strip()
     body = (driver.find_element("tag name", "body").text or "").strip()
@@ -70,8 +59,7 @@ def _assert_page_loaded(driver, *, title_contains: str | None = None) -> None:
 
     for marker in BLOCKED_MARKERS:
         assert marker not in combined, (
-            f"Page blocked — found {marker!r} "
-            f"(title: {title!r}, body: {body[:400]!r})"
+            f"Page blocked — found {marker!r} (title: {title!r}, body: {body[:400]!r})"
         )
 
     if title_contains is not None:
@@ -87,13 +75,13 @@ def _assert_fpscanner_clean(driver) -> None:
     failures = _fpscanner_failures(body)
     assert not failures, (
         f"FPScanner bot checks failed: {failures} "
-        f"(body excerpt: {body[body.lower().find('bot detection'):body.lower().find('bot detection') + 1200]!r})"
+        f"(body excerpt: {body[body.lower().find('bot detection') : body.lower().find('bot detection') + 1200]!r})"
     )
 
 
 @pytest.fixture
 def chrome_driver():
-    driver = webdriver.Chrome(options=_chrome_options())
+    driver = webdriver.Chrome(options=Options())
     try:
         yield driver
     finally:

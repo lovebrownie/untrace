@@ -1,0 +1,17 @@
+---
+description: Integration test conventions for Selenium/browser tests
+globs: tests/**
+alwaysApply: true
+---
+
+# Browser integration tests
+
+Tests must use **plain Selenium** with no extra Chrome configuration:
+
+- Do **not** add `excludeSwitches`, `useAutomationExtension`, or other experimental options to pass tests.
+- Do **not** add Chrome arguments in tests (`--disable-blink-features`, `--disable-features`, headless, etc.).
+- Use bare `webdriver.Chrome(options=Options())` only.
+
+Stealth, flags, and extension seeding come from the **installed untrace wrapper and extension** (`sudo python -m untrace --install --stealth --flags`), not from test code.
+
+If a test fails, fix untrace (wrapper, extension JS, install path) — never patch the test driver to hide the failure.

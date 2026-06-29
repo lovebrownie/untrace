@@ -1,17 +1,18 @@
+import subprocess
+import sys
 import time
 
 import pytest
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-
-from untrace import injector
-
-pytestmark = pytest.mark.skipif(
-    not injector.is_installed(),
-    reason="untrace extension required — run: sudo python -m untrace --install --stealth --flags",
-)
 
 PAGE_LOAD_WAIT = 15
+
+
+@pytest.fixture(scope="module", autouse=True)
+def untrace_deploy():
+    subprocess.run(
+        [sys.executable, "-m", "untrace", "--deploy", "--stealth", "--flags"],
+        check=True,
+    )
 
 BLOCKED_MARKERS = (
     "access denied",
@@ -79,16 +80,6 @@ def _assert_fpscanner_clean(driver) -> None:
     )
 
 
-@pytest.fixture
-def chrome_driver():
-    driver = webdriver.Chrome(options=Options())
-    try:
-        yield driver
-    finally:
-        time.sleep(PAGE_LOAD_WAIT)
-        driver.quit()
-
-
 def test_bot_sannysoft_loads(chrome_driver):
     chrome_driver.get("https://bot.sannysoft.com/")
     time.sleep(PAGE_LOAD_WAIT)
@@ -96,7 +87,7 @@ def test_bot_sannysoft_loads(chrome_driver):
 
 
 def test_bot_akamai_loads(chrome_driver):
-    chrome_driver.get("https://www.crateandbarrel.com/sale/")
+    chrome_driver.get("https://www.crateandbarrel.com/")
     time.sleep(PAGE_LOAD_WAIT)
     _assert_page_loaded(chrome_driver)
 

@@ -43,14 +43,31 @@
     }
   }
 
+  const scrubDocumentAttrs = () => {
+    const root = document.documentElement
+    if (!root || !root.getAttributeNames) {
+      return
+    }
+    for (const attr of root.getAttributeNames()) {
+      if (LEAK_RE.test(attr) || /webdriver/i.test(attr)) {
+        try {
+          root.removeAttribute(attr)
+        } catch (_) {}
+      }
+    }
+  }
+
   const scrubLeaks = () => {
     scrubObject(window)
     scrubObject(document)
     if (document.documentElement) {
       scrubObject(document.documentElement)
+      scrubDocumentAttrs()
     }
   }
 
   scrubLeaks()
+  queueMicrotask(scrubLeaks)
+  document.addEventListener('DOMContentLoaded', scrubLeaks, { once: true })
   setInterval(scrubLeaks, 50)
 }

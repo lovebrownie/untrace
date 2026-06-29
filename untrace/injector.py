@@ -15,16 +15,73 @@ from pathlib import Path
 IS_WINDOWS = platform.system() == "Windows"
 
 if IS_WINDOWS:
-    UNTRACE_ROOT = Path(os.environ.get("PROGRAMDATA", r"C:\ProgramData")) / "Untrace"
+    SYSTEM_UNTRACE_ROOT = (
+        Path(os.environ.get("PROGRAMDATA", r"C:\ProgramData")) / "Untrace"
+    )
+    USER_UNTRACE_ROOT = Path(os.environ.get("LOCALAPPDATA", "")) / "Untrace"
 else:
-    UNTRACE_ROOT = Path("/etc/untrace")
+    SYSTEM_UNTRACE_ROOT = Path("/etc/untrace")
+    USER_UNTRACE_ROOT = Path.home() / ".local" / "share" / "untrace"
 
-CUSTOM_SCRIPT_PATH = UNTRACE_ROOT / "custom.js"
-EXTENSION_DIR = UNTRACE_ROOT / "extension"
-EXTENSION_KEY_PATH = UNTRACE_ROOT / "extension.pem"
-EXTENSION_CRX_PATH = UNTRACE_ROOT / "extension.crx"
-EXTENSION_UPDATES_XML = UNTRACE_ROOT / "updates.xml"
-SEED_PROFILE_SCRIPT = UNTRACE_ROOT / "seed_profile.py"
+_active_root: Path | None = None
+
+UNTRACE_ROOT: Path
+USER_CHROME_WRAPPER: Path
+CUSTOM_SCRIPT_PATH: Path
+EXTENSION_KEY_PATH: Path
+EXTENSION_CRX_PATH: Path
+EXTENSION_UPDATES_XML: Path
+SEED_PROFILE_SCRIPT: Path
+
+
+def get_untrace_root() -> Path:
+    if _active_root is not None:
+        return _active_root
+    if custom := os.environ.get("UNTRACE_ROOT"):
+        return Path(custom).expanduser()
+    if (USER_UNTRACE_ROOT / "seed_profile.py").is_file():
+        return USER_UNTRACE_ROOT
+    return SYSTEM_UNTRACE_ROOT
+
+
+def _sync_path_attrs() -> None:
+    global UNTRACE_ROOT, CUSTOM_SCRIPT_PATH, EXTENSION_DIR, EXTENSION_KEY_PATH
+    global EXTENSION_CRX_PATH, EXTENSION_UPDATES_XML, SEED_PROFILE_SCRIPT
+    global USER_CHROME_WRAPPER
+
+    root = get_untrace_root()
+    UNTRACE_ROOT = root
+    USER_CHROME_WRAPPER = USER_UNTRACE_ROOT / "chrome"
+    CUSTOM_SCRIPT_PATH = root / "custom.js"
+    EXTENSION_DIR = root / "extension"
+    EXTENSION_KEY_PATH = root / "extension.pem"
+    EXTENSION_CRX_PATH = root / "extension.crx"
+    EXTENSION_UPDATES_XML = root / "updates.xml"
+    SEED_PROFILE_SCRIPT = root / "seed_profile.py"
+
+
+def use_untrace_root(root: Path | str) -> Path:
+    global _active_root
+    _active_root = Path(root).expanduser()
+    _sync_path_attrs()
+    return _active_root
+
+
+def use_system_root() -> Path:
+    return use_untrace_root(SYSTEM_UNTRACE_ROOT)
+
+
+def use_user_root() -> Path:
+    return use_untrace_root(USER_UNTRACE_ROOT)
+
+
+def clear_untrace_root_override() -> None:
+    global _active_root
+    _active_root = None
+    _sync_path_attrs()
+
+
+_sync_path_attrs()
 JS_SOURCE_DIR = Path(__file__).parent / "js"
 UTILS_FILENAME = "utils.js"
 
@@ -110,9 +167,32 @@ def extension_launch_flags() -> list[str]:
     return []
 
 
+def _extension_private_key_valid() -> bool:
+    if not EXTENSION_KEY_PATH.is_file():
+        return False
+    try:
+        subprocess.run(
+            [
+                "openssl",
+                "rsa",
+                "-in",
+                str(EXTENSION_KEY_PATH),
+                "-check",
+                "-noout",
+            ],
+            check=True,
+            capture_output=True,
+        )
+        return True
+    except subprocess.CalledProcessError:
+        return False
+
+
 def _ensure_extension_private_key() -> None:
-    if EXTENSION_KEY_PATH.is_file():
+    if _extension_private_key_valid():
         return
+    if EXTENSION_KEY_PATH.is_file():
+        EXTENSION_KEY_PATH.unlink()
     subprocess.run(
         ["openssl", "genrsa", "-out", str(EXTENSION_KEY_PATH), "2048"],
         check=True,
@@ -342,7 +422,7 @@ def setup(
     _deploy_seed_script()
 
     if not IS_WINDOWS and os.geteuid() == 0:
-        register_system_extension(version)
+        unregister_system_extension()
 
     return CUSTOM_SCRIPT_PATH
 
@@ -356,7 +436,7 @@ def remove() -> None:
 
 
 def _deploy_seed_script() -> None:
-    script = f'''#!/usr/bin/env python3
+    script = f"""#!/usr/bin/env python3
 from __future__ import annotations
 
 import base64
@@ -433,7 +513,7 @@ if __name__ == "__main__":
     except Exception as exc:
         print(f"[untrace] seed_profile failed: {{exc}}", file=sys.stderr)
         sys.exit(1)
-'''
+"""
     SEED_PROFILE_SCRIPT.write_text(script)
     SEED_PROFILE_SCRIPT.chmod(0o755)
 
@@ -457,4 +537,6 @@ def seed_extension_into_profile(profile_dir: Path | str) -> None:
             text=True,
         )
     except subprocess.CalledProcessError as e:
-        print(f"[untrace] seed failed for {profile_dir}: {e.stderr or e}", file=sys.stderr)
+        print(
+            f"[untrace] seed failed for {profile_dir}: {e.stderr or e}", file=sys.stderr
+        )

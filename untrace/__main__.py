@@ -10,18 +10,37 @@ import string
 import subprocess
 import sys
 import tempfile
+from pathlib import Path
 
-from untrace import config, injector
+from untrace import chromedriver_patch, config, injector
 
 IS_WINDOWS = platform.system() == "Windows"
+
+CHROMEDRIVER_STRIP_FLAGS: tuple[str, ...] = (
+    "--enable-automation",
+    "--test-type=webdriver",
+    "--allow-pre-commit-input",
+    "--disable-background-networking",
+    "--disable-background-timer-throttling",
+    "--disable-backgrounding-occluded-windows",
+    "--disable-client-side-phishing-detection",
+    "--disable-default-apps",
+    "--disable-hang-monitor",
+    "--disable-popup-blocking",
+    "--disable-prompt-on-repost",
+    "--disable-sync",
+    "--enable-logging=stderr",
+    "--no-service-autorun",
+    "--password-store=basic",
+    "--disable-features=IgnoreDuplicateNavs,Prewarm",
+    "--disable-blink-features=AutomationControlled",
+)
 
 CHROME_FLAGS: dict[str, str] = {
     "start-maximized": "--start-maximized",
     "no-default-browser-check": "--no-default-browser-check",
     "no-first-run": "--no-first-run",
-    "disable-automation-controlled": (
-        "--disable-blink-features=AutomationControlled"
-    ),
+    "lang": "--lang=en-US",
     "disable-automation-mode": (
         "--disable-features=AutomationModeDesktop,AutomationModeAndroid"
     ),
@@ -29,6 +48,8 @@ CHROME_FLAGS: dict[str, str] = {
 }
 
 CHROME_SCRIPTS: dict[str, tuple[str, list | None]] = {
+    "navigator.userAgent": ("navigator.userAgent.js", None),
+    "navigator.headless": ("navigator.headless.js", None),
     "cdp": ("cdp.js", None),
     "akamai": ("akamai.js", None),
     "sourceurl": ("sourceurl.js", None),
@@ -38,6 +59,7 @@ CHROME_SCRIPTS: dict[str, tuple[str, list | None]] = {
     "chrome.csi": ("chrome.csi.js", None),
     "chrome.loadTimes": ("chrome.loadTimes.js", None),
     "iframe.contentWindow": ("iframe.contentWindow.js", None),
+    "iframe.webdriver": ("iframe.webdriver.js", None),
     "media.codecs": ("media.codecs.js", None),
     "navigator.languages": ("navigator.languages.js", [["en-US", "en"]]),
     "navigator.permissions": ("navigator.permissions.js", None),
@@ -46,10 +68,22 @@ CHROME_SCRIPTS: dict[str, tuple[str, list | None]] = {
     "webgl.vendor": ("webgl.vendor.js", ["Intel Inc.", "Intel Iris OpenGL Engine"]),
     "window.outerdimensions": ("window.outerdimensions.js", None),
     "hairline.fix": ("hairline.fix.js", None),
+    "cleanup": ("cleanup.js", None),
 }
 
 DEFAULT_CHROME_FLAGS: tuple[str, ...] = tuple(CHROME_FLAGS.keys())
-OPTIONAL_CHROME_SCRIPTS: frozenset[str] = frozenset({"hairline.fix"})
+OPTIONAL_CHROME_SCRIPTS: frozenset[str] = frozenset(
+    {
+        "hairline.fix",
+        "navigator.permissions",
+        "media.codecs",
+        "navigator.plugins",
+        "chrome.app",
+        "chrome.runtime",
+        "chrome.csi",
+        "chrome.loadTimes",
+    }
+)
 DEFAULT_CHROME_SCRIPTS: tuple[str, ...] = tuple(
     name for name in CHROME_SCRIPTS if name not in OPTIONAL_CHROME_SCRIPTS
 )
@@ -151,13 +185,48 @@ for arg in "$@"; do
 done
 """
 
-SEED_EXTENSION_BASH = f"""
-_seed_untrace_extension() {{
+HEADLESS_DETECT_BASH = """
+_untrace_wants_headless=0
+_untrace_headless_extras=()
+for arg in "$@"; do
+  case "$arg" in
+    --headless|--headless=*)
+      _untrace_wants_headless=1
+      _untrace_headless_extras=(--window-size=1920,1080 --ozone-override-screen-size=1920,1080)
+      break
+      ;;
+  esac
+done
+"""
+
+CHROME_RUNNER_BASH = """
+_untrace_runner=("$CHROME_REAL")
+if [ "$_untrace_wants_headless" = "1" ] && command -v xvfb-run >/dev/null 2>&1; then
+  _untrace_runner=(xvfb-run -a -s "-screen 0 1920x1080x24" "$CHROME_REAL")
+fi
+"""
+
+SEED_EXTENSION_BASH = """
+_resolve_untrace_root() {
+  if [ -n "${UNTRACE_ROOT:-}" ] && [ -f "${UNTRACE_ROOT}/seed_profile.py" ]; then
+    printf '%s\\n' "$UNTRACE_ROOT"
+    return 0
+  fi
+  if [ -f "${HOME}/.local/share/untrace/seed_profile.py" ]; then
+    printf '%s\\n' "${HOME}/.local/share/untrace"
+    return 0
+  fi
+  printf '%s\\n' "/etc/untrace"
+}
+
+_seed_untrace_extension() {
   local pdir="$1"
+  local root
   [ -n "$pdir" ] || return 0
+  root="$(_resolve_untrace_root)"
   mkdir -p "$pdir"
-  {injector.SEED_PROFILE_SCRIPT} "$pdir" || true
-}}
+  "$root/seed_profile.py" "$pdir" || true
+}
 """
 
 PARSE_USER_DATA_DIR_BASH = """
@@ -187,26 +256,86 @@ _seed_untrace_extension "$RANDOM_DIR"
 """
 
 
-def build_chrome_wrapper_script(flags: list[str]) -> str:
+def _chromedriver_strip_case_pattern() -> str:
+    arms = [
+        flag
+        for flag in CHROMEDRIVER_STRIP_FLAGS
+        if flag != "--disable-blink-features=AutomationControlled"
+    ]
+    arms.append("--disable-blink-features=*")
+    arms.extend(("--log-level=*", "--test-type=*", "--headless=*"))
+    return "|".join(arms)
+
+
+STRIP_AUTOMATION_ARGS_BASH = f"""
+_untrace_filtered=()
+_untrace_skip_next=0
+for arg in "$@"; do
+  if [ "$_untrace_skip_next" = "1" ]; then
+    _untrace_skip_next=0
+    continue
+  fi
+  case "$arg" in
+    {_chromedriver_strip_case_pattern()})
+      continue
+      ;;
+    --disable-blink-features)
+      _untrace_skip_next=1
+      continue
+      ;;
+    --headless)
+      _untrace_skip_next=1
+      continue
+      ;;
+    --test-type)
+      _untrace_skip_next=1
+      continue
+      ;;
+    --log-level)
+      _untrace_skip_next=1
+      continue
+      ;;
+  esac
+  _untrace_filtered+=("$arg")
+done
+"""
+
+
+def chrome_real_binary() -> str:
+    real = chrome_real_path()
+    if os.path.isfile(real):
+        return real
+    return CHROME_BINARY
+
+
+def build_chrome_wrapper_script(
+    flags: list[str], *, chrome_real: str | None = None
+) -> str:
     flags_str = f" {flags_str}" if (flags_str := " ".join(flags)) else ""
-    return (
-        "#!/bin/bash\n"
-        f'CHROME_REAL="$(dirname "$(readlink -f "$0")")/{CHROME_REAL_NAME}"\n'
-        + f"""
+    if chrome_real is None:
+        chrome_real_line = (
+            f'CHROME_REAL="$(dirname "$(readlink -f "$0")")/{CHROME_REAL_NAME}"'
+        )
+    else:
+        chrome_real_line = f'CHROME_REAL="{chrome_real}"'
+    return "#!/bin/bash\n" f"{chrome_real_line}\n" + f"""
 {UNTRACE_BEGIN}
 {SEED_EXTENSION_BASH}
 {AUTOMATION_DETECT_BASH}
+{HEADLESS_DETECT_BASH}
+{CHROME_RUNNER_BASH}
 if [ "$UNTRACE_AUTOMATION" = "1" ]; then
 {PARSE_USER_DATA_DIR_BASH}
   _seed_untrace_extension "$_untrace_user_data_dir"
-  exec -a "$0" "$CHROME_REAL" "$@"{flags_str}
+{STRIP_AUTOMATION_ARGS_BASH}
+  exec -a "$0" "${{_untrace_runner[@]}}" "${{_untrace_filtered[@]}}" "${{_untrace_headless_extras[@]}}"{flags_str}
 else
 {RANDOM_DIR_BASH}
-  exec -a "$0" "$CHROME_REAL" "$@" --user-data-dir="$RANDOM_DIR"{flags_str}
+{STRIP_AUTOMATION_ARGS_BASH}
+  exec -a "$0" "${{_untrace_runner[@]}}" "${{_untrace_filtered[@]}}" --user-data-dir="$RANDOM_DIR" "${{_untrace_headless_extras[@]}}"{flags_str}
 fi
 {UNTRACE_END}
 """
-    )
 
 
 def _strip_legacy_launcher_patch(content: str) -> str:
@@ -282,9 +411,39 @@ def _print_active_features(cfg: dict | None = None) -> None:
     print(f"{'✓' if flags_enabled else '✗'} Flags")
 
 
+def _installed_wrapper_stale() -> list[str]:
+    issues: list[str] = []
+    if not is_chrome_wrapped_linux():
+        return issues
+
+    try:
+        content = open(CHROME_BINARY, "r", encoding="utf-8").read()
+    except OSError:
+        return issues
+
+    for line in content.splitlines():
+        if "exec " not in line or "CHROME_REAL" not in line:
+            continue
+        if "AutomationControlled" in line:
+            issues.append(
+                "wrapper still passes unsupported --disable-blink-features=AutomationControlled; re-run install"
+            )
+        break
+    return issues
+
+
 def status_linux():
     print("Patched" if is_chrome_wrapped_linux() else "Not patched")
+    print(f"Active untrace root: {injector.get_untrace_root()}")
     _print_active_features()
+    for issue in _installed_wrapper_stale():
+        print(f"Warning: {issue}")
+    if not is_chrome_wrapped_linux():
+        print("Hint: run once with sudo: python -m untrace --install --stealth --flags")
+    elif not (injector.USER_UNTRACE_ROOT / "seed_profile.py").is_file():
+        print(
+            "Hint: python -m untrace --deploy --stealth --flags (no password) updates extension"
+        )
 
 
 def _resolve_install_config(*, stealth: bool = False, flags: bool = False) -> dict:
@@ -293,8 +452,53 @@ def _resolve_install_config(*, stealth: bool = False, flags: bool = False) -> di
     return cfg
 
 
+def deploy_user_chrome_wrapper(launch_flags: list[str]) -> Path:
+    wrapper = injector.USER_CHROME_WRAPPER
+    wrapper.parent.mkdir(parents=True, exist_ok=True)
+    script = build_chrome_wrapper_script(launch_flags, chrome_real=chrome_real_binary())
+    wrapper.write_text(script)
+    os.chmod(wrapper, 0o755)
+    for name in (
+        "google-chrome",
+        "google-chrome-stable",
+        "chromium",
+        "chromium-browser",
+    ):
+        link = wrapper.parent / name
+        if link.exists() or link.is_symlink():
+            link.unlink()
+        link.symlink_to("chrome")
+    return wrapper
+
+
+def deploy_linux(*, stealth: bool = False, flags: bool = False):
+    injector.use_user_root()
+    cfg = _resolve_install_config(stealth=stealth, flags=flags)
+
+    if cfg.get("js_injection", True):
+        scripts = list(DEFAULT_CHROME_SCRIPTS)
+        injector.setup(scripts, CHROME_SCRIPTS)
+
+    launch_flags = chrome_launch_flags()
+    wrapper = deploy_user_chrome_wrapper(launch_flags)
+
+    patched_drivers = chromedriver_patch.patch_all_chromedrivers()
+    if patched_drivers:
+        print(f"Patched {len(patched_drivers)} chromedriver binary(s).")
+
+    print(f"Deployed to {injector.get_untrace_root()} (no root required).")
+    print(f"Selenium chrome wrapper: {wrapper}")
+    _print_active_features(cfg)
+    if not is_chrome_wrapped_linux():
+        print(
+            "Note: system Chrome wrapper not installed; Selenium uses the user wrapper above.",
+            file=sys.stderr,
+        )
+
+
 def install_linux(*, stealth: bool = False, flags: bool = False):
     require_root()
+    injector.use_system_root()
     cfg = _resolve_install_config(stealth=stealth, flags=flags)
 
     already_wrapped = is_chrome_wrapped_linux()
@@ -310,12 +514,17 @@ def install_linux(*, stealth: bool = False, flags: bool = False):
     launch_flags = chrome_launch_flags()
     install_chrome_binary_wrapper(launch_flags)
 
+    patched_drivers = chromedriver_patch.patch_all_chromedrivers()
+    if patched_drivers:
+        print(f"Patched {len(patched_drivers)} chromedriver binary(s).")
+
     print("Installed." if not already_wrapped else "Updated.")
     _print_active_features(cfg)
 
 
 def uninstall_linux():
     require_root()
+    injector.use_system_root()
     if not is_chrome_wrapped_linux() and not os.path.isfile(backup_path_linux()):
         print("No untrace patch found — nothing to restore.", file=sys.stderr)
         sys.exit(1)
@@ -545,6 +754,14 @@ def install(*, stealth: bool = False, flags: bool = False):
     install_windows(**kwargs) if IS_WINDOWS else install_linux(**kwargs)
 
 
+def deploy(*, stealth: bool = False, flags: bool = False):
+    kwargs = {"stealth": stealth, "flags": flags}
+    if IS_WINDOWS:
+        print("--deploy is not supported on Windows yet.", file=sys.stderr)
+        sys.exit(1)
+    deploy_linux(**kwargs)
+
+
 def uninstall():
     uninstall_windows() if IS_WINDOWS else uninstall_linux()
 
@@ -559,22 +776,21 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            "  sudo python3 -m untrace --install\n"
-            "  sudo python3 -m untrace --install --stealth\n"
-            "  sudo python3 -m untrace --install --flags\n"
-            "  sudo python3 -m untrace --install --stealth --flags"
+            "  sudo python3 -m untrace --install --stealth --flags   # once, needs root\n"
+            "  python3 -m untrace --deploy --stealth --flags         # update extension, no root\n"
+            "  pytest tests/test_chromedriver.py                     # auto-deploys before tests"
         ),
     )
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--install", action="store_true")
+    group.add_argument("--deploy", action="store_true")
     group.add_argument("--uninstall", action="store_true")
     group.add_argument("--status", action="store_true")
-
-    toggles = parser.add_argument_group("features (used with --install)")
+    toggles = parser.add_argument_group("features (used with --install / --deploy)")
     toggles.add_argument(
         "--stealth",
         action="store_true",
-        help="install with stealth JS injection only",
+        help="install stealth JS injection and anti-automation Chrome flags",
     )
     toggles.add_argument(
         "--flags",
@@ -586,6 +802,8 @@ def main():
 
     if args.install:
         install(stealth=args.stealth, flags=args.flags)
+    elif args.deploy:
+        deploy(stealth=args.stealth, flags=args.flags)
     elif args.uninstall:
         uninstall()
     elif args.status:

@@ -4,18 +4,10 @@
   utils.preloadCache()
   const proto = Object.getPrototypeOf(navigator)
 
-  if (navigator.webdriver === false) {
-    return
-  }
-
-  if (navigator.webdriver === undefined) {
-    return
-  }
-
   utils.replaceProperty(proto, 'webdriver', {
     get: () => false,
     set: () => undefined,
     configurable: true,
-    enumerable: true
+    enumerable: true,
   })
 }

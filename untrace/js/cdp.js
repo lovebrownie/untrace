@@ -62,7 +62,7 @@
   install()
   queueMicrotask(install)
   setTimeout(install, 0)
-  setInterval(install, 4)
+  setInterval(install, 100)
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', install, { once: true })

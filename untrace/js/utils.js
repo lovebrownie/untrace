@@ -12,7 +12,7 @@
    * Alternatively take a look at the `extract-stealth-evasions` package to create a finished bundle which includes these utilities.
    *
    */
-  utils = {}
+  const utils = {}
 
   /**
    * Wraps a JS Proxy Handler and strips it's presence from error stacks, in case the traps throw.
@@ -454,4 +454,11 @@
   }
 
   utils.preloadCache()
+
+  Object.defineProperty(globalThis, 'utils', {
+    value: utils,
+    enumerable: false,
+    writable: false,
+    configurable: true,
+  })
 }

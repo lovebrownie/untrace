@@ -129,9 +129,8 @@ def temp_registration(monkeypatch, tmp_path):
     }
 
 
-def test_register_system_extension(temp_registration, monkeypatch):
+def test_setup_does_not_force_install_extension(temp_registration, monkeypatch):
     data = temp_registration
-    expected_id = data["expected_id"]
 
     monkeypatch.setattr(
         injector,
@@ -141,6 +140,26 @@ def test_register_system_extension(temp_registration, monkeypatch):
     monkeypatch.setattr(os, "geteuid", lambda: 0)
 
     injector.setup(list(DEFAULT_CHROME_SCRIPTS), CHROME_SCRIPTS)
+
+    assert not data["policy_file"].exists()
+    for ext_dir_path in data["external_dirs"]:
+        assert not (ext_dir_path / f"{data['expected_id']}.json").exists()
+    assert not injector.is_fully_registered()
+
+
+def test_register_system_extension(temp_registration, monkeypatch):
+    data = temp_registration
+    expected_id = data["expected_id"]
+
+    monkeypatch.setattr(
+        injector,
+        "_pack_extension_crx",
+        lambda _chrome_real=None: data["crx_path"].write_text("DUMMY CRX"),
+    )
+    monkeypatch.setattr(os, "geteuid", lambda: 1000)
+
+    injector.setup(list(DEFAULT_CHROME_SCRIPTS), CHROME_SCRIPTS)
+    injector.register_system_extension()
 
     policy = json.loads(data["policy_file"].read_text())
     assert policy["ExtensionSettings"][expected_id]["installation_mode"] == "force_installed"
@@ -161,6 +180,7 @@ def test_unregister_clears_registration_files(temp_registration, monkeypatch):
     )
     monkeypatch.setattr(os, "geteuid", lambda: 0)
     injector.setup(list(DEFAULT_CHROME_SCRIPTS), CHROME_SCRIPTS)
+    injector.register_system_extension()
     injector.remove()
 
     assert not data["crx_path"].exists()

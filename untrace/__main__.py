@@ -22,9 +22,17 @@ CHROME_FLAGS: dict[str, str] = {
     "disable-automation-controlled": (
         "--disable-blink-features=AutomationControlled"
     ),
+    "disable-automation-mode": (
+        "--disable-features=AutomationModeDesktop,AutomationModeAndroid"
+    ),
+    "remote-allow-origins": "--remote-allow-origins=*",
 }
 
 CHROME_SCRIPTS: dict[str, tuple[str, list | None]] = {
+    "cdp": ("cdp.js", None),
+    "akamai": ("akamai.js", None),
+    "sourceurl": ("sourceurl.js", None),
+    "navigator.webdriver": ("navigator.webdriver.js", None),
     "chrome.app": ("chrome.app.js", None),
     "chrome.runtime": ("chrome.runtime.js", [False]),
     "chrome.csi": ("chrome.csi.js", None),
@@ -35,20 +43,13 @@ CHROME_SCRIPTS: dict[str, tuple[str, list | None]] = {
     "navigator.permissions": ("navigator.permissions.js", None),
     "navigator.plugins": ("navigator.plugins.js", None),
     "navigator.vendor": ("navigator.vendor.js", ["Google Inc."]),
-    "navigator.webdriver": ("navigator.webdriver.js", None),
-    "sourceurl": ("sourceurl.js", None),
-    "akamai": ("akamai.js", None),
     "webgl.vendor": ("webgl.vendor.js", ["Intel Inc.", "Intel Iris OpenGL Engine"]),
     "window.outerdimensions": ("window.outerdimensions.js", None),
     "hairline.fix": ("hairline.fix.js", None),
 }
 
 DEFAULT_CHROME_FLAGS: tuple[str, ...] = tuple(CHROME_FLAGS.keys())
-# Optional scripts are deployed on demand; akamai/sourceurl patch native APIs in ways
-# Akamai Bot Manager detects, and hairline.fix is only needed for headless layouts.
-OPTIONAL_CHROME_SCRIPTS: frozenset[str] = frozenset(
-    {"hairline.fix", "akamai", "sourceurl"}
-)
+OPTIONAL_CHROME_SCRIPTS: frozenset[str] = frozenset({"hairline.fix"})
 DEFAULT_CHROME_SCRIPTS: tuple[str, ...] = tuple(
     name for name in CHROME_SCRIPTS if name not in OPTIONAL_CHROME_SCRIPTS
 )

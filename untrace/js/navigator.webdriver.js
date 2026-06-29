@@ -1,5 +1,21 @@
 // https://github.com/berstend/puppeteer-extra/blob/c44c8bb0224c6bba2554017bfb9d7a1d0119f92f/packages/puppeteer-extra-plugin-stealth/evasions/navigator.webdriver/index.js
 
 () => {
-  delete Object.getPrototypeOf(navigator).webdriver
+  utils.preloadCache()
+  const proto = Object.getPrototypeOf(navigator)
+
+  if (navigator.webdriver === false) {
+    return
+  }
+
+  if (navigator.webdriver === undefined) {
+    return
+  }
+
+  utils.replaceProperty(proto, 'webdriver', {
+    get: () => false,
+    set: () => undefined,
+    configurable: true,
+    enumerable: true
+  })
 }

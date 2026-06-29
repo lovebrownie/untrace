@@ -4,6 +4,13 @@ import pytest
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 
+from untrace import injector
+
+pytestmark = pytest.mark.skipif(
+    not injector.is_installed(),
+    reason="untrace extension required — run: sudo python -m untrace --install --stealth --flags",
+)
+
 PAGE_LOAD_WAIT = 15
 
 BLOCKED_MARKERS = (
@@ -19,6 +26,9 @@ def _chrome_options() -> Options:
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
     options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_argument(
+        "--disable-features=AutomationModeDesktop,AutomationModeAndroid"
+    )
     return options
 
 
@@ -26,6 +36,29 @@ def _page_content(driver) -> tuple[str, str]:
     title = (driver.title or "").strip()
     body = (driver.find_element("tag name", "body").text or "").strip()
     return title, body
+
+
+def _fpscanner_failures(body: str) -> list[str]:
+    if "bot detection" not in body.lower():
+        return ["Bot Detection section missing from page body"]
+
+    section = body.lower().split("bot detection", 1)[1]
+    if "bot detected" in section:
+        return ["FPScanner reported: Bot Detected"]
+
+    lines = body.split("Bot Detection", 1)[1].splitlines()
+    failures: list[str] = []
+    for idx, line in enumerate(lines):
+        if line.strip() != "DETECTED":
+            continue
+        label = ""
+        for back in range(idx - 1, max(idx - 4, -1), -1):
+            candidate = lines[back].strip()
+            if candidate and candidate not in {"✕", "▼", "OK", "✓"}:
+                label = candidate
+                break
+        failures.append(label or "unknown check")
+    return failures
 
 
 def _assert_page_loaded(driver, *, title_contains: str | None = None) -> None:
@@ -46,6 +79,16 @@ def _assert_page_loaded(driver, *, title_contains: str | None = None) -> None:
             f"Expected {title_contains!r} in title, got {title!r} "
             f"(body: {body[:300]!r})"
         )
+
+
+def _assert_fpscanner_clean(driver) -> None:
+    _assert_page_loaded(driver, title_contains="fpscanner")
+    _, body = _page_content(driver)
+    failures = _fpscanner_failures(body)
+    assert not failures, (
+        f"FPScanner bot checks failed: {failures} "
+        f"(body excerpt: {body[body.lower().find('bot detection'):body.lower().find('bot detection') + 1200]!r})"
+    )
 
 
 @pytest.fixture
@@ -73,7 +116,7 @@ def test_bot_akamai_loads(chrome_driver):
 def test_fpscanner_demo_loads(chrome_driver):
     chrome_driver.get("https://fpscanner.com/demo/")
     time.sleep(PAGE_LOAD_WAIT)
-    _assert_page_loaded(chrome_driver, title_contains="fpscanner")
+    _assert_fpscanner_clean(chrome_driver)
 
 
 def test_untrace_extension_listed_on_chrome_extensions(chrome_driver):

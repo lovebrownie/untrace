@@ -1,14 +1,41 @@
-// Optional — NOT in DEFAULT_CHROME_SCRIPTS. Enable only when you need Selenium leak
-// cleanup on non-Akamai pages. Keeps a minimal surface: CDC keys only, no API proxies.
+// Selenium / chromedriver leak cleanup — CDC keys and automation globals only.
 
 () => {
   const LEAK_RE =
-    /^(?:\$cdc_|cdc_|__webdriver|__driver|__selenium|_selenium|_Selenium|calledSelenium|webdriver_|selenium_|domAutomation|domAutomationController)/i
+    /^(?:\$cdc_|cdc_|__driver|__webdriver|__selenium|__fxdriver|_\$webdriver|_\$chrome|_\$cdc|_Selenium|_selenium|calledSelenium|webdriver_|selenium_|domAutomation|domAutomationController|__\$webdriverAsyncExecutor|__lastWatir)/i
+
+  const WINDOW_LEAKS = new Set([
+    '__driver_evaluate',
+    '__webdriver_evaluate',
+    '__selenium_evaluate',
+    '__fxdriver_evaluate',
+    '__driver_unwrapped',
+    '__webdriver_unwrapped',
+    '__selenium_unwrapped',
+    '__fxdriver_unwrapped',
+    '_Selenium_IDE_Recorder',
+    '_selenium',
+    'calledSelenium',
+    '$cdc_asdjflasutopfhvcZLmcfl_',
+    '$chrome_asyncScriptInfo',
+    '__$webdriverAsyncExecutor',
+    'webdriver',
+    '__webdriverFunc',
+    'domAutomation',
+    'domAutomationController',
+    '__lastWatirAlert',
+    '__lastWatirConfirm',
+    '__lastWatirPrompt',
+    '__webdriver_script_fn',
+    '_WEBDRIVER_ELEM_CACHE',
+    '__pwInitScripts',
+    '__playwright__binding__'
+  ])
 
   const scrubObject = (obj) => {
     if (!obj) return
     for (const key of Object.getOwnPropertyNames(obj)) {
-      if (LEAK_RE.test(key)) {
+      if (LEAK_RE.test(key) || WINDOW_LEAKS.has(key)) {
         try {
           delete obj[key]
         } catch (_) {}
@@ -16,6 +43,14 @@
     }
   }
 
-  scrubObject(window)
-  scrubObject(document)
+  const scrubLeaks = () => {
+    scrubObject(window)
+    scrubObject(document)
+    if (document.documentElement) {
+      scrubObject(document.documentElement)
+    }
+  }
+
+  scrubLeaks()
+  setInterval(scrubLeaks, 50)
 }

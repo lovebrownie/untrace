@@ -1,21 +1,45 @@
-import time
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import WebDriverWait
 
-import pytest
-
-PAGE_LOAD_WAIT = 15
-
+PAGE_TIMEOUT = 30
 
 BLOCKED_MARKERS = (
     "access denied",
     "request denied",
     "errors.edgesuite.net",
     "you don't have permission to access",
+    "something went wrong",
 )
+
+
+def _wait(driver) -> WebDriverWait:
+    return WebDriverWait(driver, PAGE_TIMEOUT)
+
+
+def _page_has_content(driver) -> bool:
+    try:
+        return bool(
+            driver.execute_script(
+                """
+                if (document.readyState !== 'complete') return false;
+                const title = (document.title || '').trim();
+                const body = (document.body && document.body.innerText || '').trim();
+                return title.length > 0 || body.length > 0;
+                """
+            )
+        )
+    except Exception:
+        return False
+
+
+def _wait_for_page_ready(driver) -> None:
+    _wait(driver).until(_page_has_content)
 
 
 def _page_content(driver) -> tuple[str, str]:
     title = (driver.title or "").strip()
-    body = (driver.find_element("tag name", "body").text or "").strip()
+    body = (driver.find_element(By.TAG_NAME, "body").text or "").strip()
     return title, body
 
 
@@ -73,30 +97,35 @@ def _assert_fpscanner_clean(driver) -> None:
 
 def test_bot_sannysoft_loads(chrome_driver):
     chrome_driver.get("https://bot.sannysoft.com/")
-    time.sleep(PAGE_LOAD_WAIT)
+    _wait_for_page_ready(chrome_driver)
     _assert_page_loaded(chrome_driver)
 
 
-AKAMAI_TEST_URL = (
-    "https://www.hilton.com/en/"
-)
+AKAMAI_TEST_URL = "https://www.hilton.com/en/"
 
 
 def test_bot_akamai_loads(chrome_driver):
     chrome_driver.get(AKAMAI_TEST_URL)
-    time.sleep(PAGE_LOAD_WAIT)
-    _assert_page_loaded(chrome_driver)
+    _wait_for_page_ready(chrome_driver)
+    _assert_page_loaded(chrome_driver, title_contains="hilton")
 
 
 def test_fpscanner_demo_loads(chrome_driver):
     chrome_driver.get("https://fpscanner.com/demo/")
-    time.sleep(PAGE_LOAD_WAIT)
+    _wait(driver).until(
+        EC.text_to_be_present_in_element((By.TAG_NAME, "body"), "Bot Detection")
+    )
     _assert_fpscanner_clean(chrome_driver)
 
 
 def test_untrace_extension_listed_on_chrome_extensions(chrome_driver):
     chrome_driver.get("chrome://extensions/")
-    time.sleep(PAGE_LOAD_WAIT)
+    _wait(driver).until(
+        lambda d: d.execute_script("""
+        const manager = document.querySelector('extensions-manager');
+        return Boolean(manager && manager.shadowRoot);
+        """)
+    )
 
     page = chrome_driver.execute_script("""
     const manager = document.querySelector('extensions-manager');

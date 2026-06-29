@@ -4,6 +4,7 @@ import glob
 import json
 import os
 import platform
+import pwd
 import random
 import re
 import shutil
@@ -107,11 +108,32 @@ def chrome_launch_flags() -> list[str]:
     return flags
 
 
+def _chown_to_sudo_user(path: Path) -> None:
+    sudo_user = os.environ.get("SUDO_USER")
+    if not sudo_user or os.geteuid() != 0 or not path.exists():
+        return
+    try:
+        pw = pwd.getpwnam(sudo_user)
+    except KeyError:
+        return
+    for entry in sorted(path.rglob("*"), reverse=True):
+        try:
+            os.chown(entry, pw.pw_uid, pw.pw_gid)
+        except OSError:
+            pass
+    try:
+        os.chown(path, pw.pw_uid, pw.pw_gid)
+    except OSError:
+        pass
+
+
 def write_launch_flags(flags: list[str], root: Path) -> Path:
     path = root / LAUNCH_FLAGS_FILE
     root.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(flags) + ("\n" if flags else ""))
     os.chmod(path, 0o644)
+    if root in injector.user_deploy_roots():
+        _chown_to_sudo_user(root)
     return path
 
 
@@ -655,6 +677,8 @@ def deploy_user_chrome_wrapper(
         if link.exists() or link.is_symlink():
             link.unlink()
         link.symlink_to("chrome")
+    if root in injector.user_deploy_roots():
+        _chown_to_sudo_user(root)
     return wrapper
 
 
@@ -670,10 +694,22 @@ def _refresh_user_wrappers(cfg: dict, launch_flags: list[str]) -> None:
         )
 
 
+def _ensure_user_deploy_writable() -> None:
+    root = injector.get_untrace_root()
+    if root.exists() and not os.access(root, os.W_OK):
+        print(
+            f"Cannot write to {root} (permission denied). "
+            f"Fix ownership: sudo chown -R $USER {root}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+
 def deploy_linux(
     *, stealth: bool = False, flags: bool = False, chromedriver: bool = False
 ):
     injector.use_user_root()
+    _ensure_user_deploy_writable()
     cfg = _resolve_install_config(
         stealth=stealth, flags=flags, chromedriver=chromedriver
     )

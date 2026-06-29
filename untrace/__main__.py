@@ -13,7 +13,8 @@ import sys
 import tempfile
 from pathlib import Path
 
-from untrace import chromedriver_patch, config, injector, selenium_manager_patch
+from untrace import (chromedriver_patch, config, injector,
+                     selenium_manager_patch)
 
 IS_WINDOWS = platform.system() == "Windows"
 
@@ -522,6 +523,10 @@ def _chromedriver_patch_active() -> bool:
     return False
 
 
+def _selenium_manager_patch_active() -> bool:
+    return selenium_manager_patch.any_patched()
+
+
 def _apply_chromedriver_patch(cfg: dict) -> None:
     if cfg.get("chromedriver_patch", True):
         patched = chromedriver_patch.patch_all_chromedrivers()
@@ -558,10 +563,12 @@ def _print_active_features(cfg: dict | None = None) -> None:
         bool(cfg.get("chrome_wrapper", True)) and _chrome_wrapper_installed()
     )
     chromedriver_enabled = _chromedriver_patch_active()
+    selenium_manager_enabled = _selenium_manager_patch_active()
     print(f"{'✓' if _effective_stealth_active() else '✗'} Stealth")
     print(f"{'✓' if flags_enabled else '✗'} Flags")
     print(f"{'✓' if wrapper_enabled else '✗'} Chrome wrapper")
     print(f"{'✓' if chromedriver_enabled else '✗'} Chromedriver patch")
+    print(f"{'✓' if selenium_manager_enabled else '✗'} Selenium-manager patch")
 
 
 def _installed_wrapper_stale() -> list[str]:
@@ -758,7 +765,11 @@ def install_linux(
 def _untrace_present() -> bool:
     if is_chrome_wrapped_linux() or os.path.isfile(backup_path_linux()):
         return True
-    return any(root.is_dir() for root in injector.user_deploy_roots())
+    if any(root.is_dir() for root in injector.user_deploy_roots()):
+        return True
+    if _chromedriver_patch_active():
+        return True
+    return _selenium_manager_patch_active()
 
 
 def uninstall_linux():
@@ -794,6 +805,12 @@ def uninstall_linux():
     if unpatched_managers:
         print(f"Unpatched {len(unpatched_managers)} selenium-manager(s).")
     print("Uninstalled.")
+    if removed_deploys or unpatched_drivers or unpatched_managers:
+        print(
+            "Hint: tests/test_chromedriver.py auto-runs --deploy before tests; "
+            "re-run uninstall after tests if you want a clean slate.",
+            file=sys.stderr,
+        )
 
 
 REAL_EXE_NAME = "chrome_real.exe"

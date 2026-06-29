@@ -73,7 +73,9 @@ def _selenium_manager_candidates() -> list[Path]:
     try:
         import selenium.webdriver.common.selenium_manager as sm
 
-        candidates.append(Path(sm.__file__).parent.parent / "linux" / f"selenium-manager{exe}")
+        candidates.append(
+            Path(sm.__file__).parent.parent / "linux" / f"selenium-manager{exe}"
+        )
     except ImportError:
         pass
 
@@ -156,3 +158,10 @@ def unpatch_all_selenium_managers() -> list[Path]:
         except OSError:
             continue
     return unpatched
+
+
+def any_patched() -> bool:
+    for binary in _selenium_manager_candidates():
+        if is_patched(binary):
+            return True
+    return False

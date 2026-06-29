@@ -10,7 +10,15 @@ PAGE_LOAD_WAIT = 15
 @pytest.fixture(scope="module", autouse=True)
 def untrace_deploy():
     subprocess.run(
-        [sys.executable, "-m", "untrace", "--deploy", "--stealth", "--flags"],
+        [
+            sys.executable,
+            "-m",
+            "untrace",
+            "--deploy",
+            "--stealth",
+            "--flags",
+            "--chromedriver",
+        ],
         check=True,
     )
 

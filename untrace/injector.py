@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import platform
+import pwd
 import shutil
 import subprocess
 import sys
@@ -34,13 +35,36 @@ EXTENSION_UPDATES_XML: Path
 SEED_PROFILE_SCRIPT: Path
 
 
+def user_deploy_roots() -> list[Path]:
+    homes: list[Path] = []
+    seen: set[Path] = set()
+
+    def add_home(home: Path) -> None:
+        resolved = home.expanduser().resolve()
+        if resolved in seen:
+            return
+        seen.add(resolved)
+        homes.append(resolved)
+
+    add_home(Path.home())
+    sudo_user = os.environ.get("SUDO_USER")
+    if sudo_user:
+        try:
+            add_home(Path(pwd.getpwnam(sudo_user).pw_dir))
+        except KeyError:
+            add_home(Path(f"/home/{sudo_user}"))
+
+    return [home / ".local" / "share" / "untrace" for home in homes]
+
+
 def get_untrace_root() -> Path:
     if _active_root is not None:
         return _active_root
     if custom := os.environ.get("UNTRACE_ROOT"):
         return Path(custom).expanduser()
-    if (USER_UNTRACE_ROOT / "seed_profile.py").is_file():
-        return USER_UNTRACE_ROOT
+    for root in user_deploy_roots():
+        if (root / "seed_profile.py").is_file():
+            return root
     return SYSTEM_UNTRACE_ROOT
 
 
@@ -435,6 +459,16 @@ def remove() -> None:
         SEED_PROFILE_SCRIPT.unlink()
 
 
+def remove_user_deploys() -> list[Path]:
+    removed: list[Path] = []
+    for root in user_deploy_roots():
+        if not root.is_dir():
+            continue
+        shutil.rmtree(root)
+        removed.append(root)
+    return removed
+
+
 def _deploy_seed_script() -> None:
     script = f"""#!/usr/bin/env python3
 from __future__ import annotations
@@ -475,6 +509,15 @@ def extension_settings_entry(ext_id: str, manifest: dict, dest: Path) -> dict:
 
 def seed(profile_dir: str) -> None:
     profile = Path(profile_dir)
+    config_path = UNTRACE_ROOT / "config.json"
+    if config_path.is_file():
+        try:
+            cfg = json.loads(config_path.read_text())
+        except Exception:
+            cfg = {{}}
+        if not cfg.get("js_injection", True):
+            return
+
     manifest_path = EXTENSION_DIR / "manifest.json"
     if not manifest_path.is_file():
         return

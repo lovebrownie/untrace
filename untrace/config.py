@@ -13,6 +13,8 @@ def config_path() -> Path:
 DEFAULT_CONFIG = {
     "js_injection": True,
     "chrome_flags": True,
+    "chrome_wrapper": True,
+    "chromedriver_patch": True,
 }
 
 
@@ -34,6 +36,10 @@ def load() -> dict:
         config["js_injection"] = bool(data["js_injection"])
     if "chrome_flags" in data:
         config["chrome_flags"] = bool(data["chrome_flags"])
+    if "chrome_wrapper" in data:
+        config["chrome_wrapper"] = bool(data["chrome_wrapper"])
+    if "chromedriver_patch" in data:
+        config["chromedriver_patch"] = bool(data["chromedriver_patch"])
     return config
 
 
@@ -49,15 +55,23 @@ def save(config: dict) -> None:
     payload = {
         "js_injection": bool(config.get("js_injection", True)),
         "chrome_flags": bool(config.get("chrome_flags", True)),
+        "chrome_wrapper": bool(config.get("chrome_wrapper", True)),
+        "chromedriver_patch": bool(config.get("chromedriver_patch", True)),
     }
     config_path().write_text(json.dumps(payload, indent=2) + "\n")
 
 
-def resolve_install_features(*, stealth: bool = False, flags: bool = False) -> dict:
-    if stealth and flags:
-        return {"js_injection": True, "chrome_flags": True}
-    if flags:
-        return {"js_injection": False, "chrome_flags": True}
-    if stealth:
-        return {"js_injection": True, "chrome_flags": True}
-    return dict(DEFAULT_CONFIG)
+def resolve_install_features(
+    *,
+    stealth: bool = False,
+    flags: bool = False,
+    chromedriver: bool = False,
+) -> dict:
+    if not stealth and not flags and not chromedriver:
+        return dict(DEFAULT_CONFIG)
+    return {
+        "js_injection": stealth,
+        "chrome_flags": flags,
+        "chrome_wrapper": flags,
+        "chromedriver_patch": chromedriver,
+    }

@@ -1,17 +1,51 @@
 from __future__ import annotations
 
 import os
+import pwd
 import re
+import shutil
 from pathlib import Path
 
 PATCH_MARKER = b"untrace chromedriver"
 CDC_INJECTION_RE = re.compile(rb"\{window\.cdc.*?;\}")
+BACKUP_SUFFIX = ".untrace.bak"
+
+
+def _home_dirs_to_search() -> list[Path]:
+    homes: list[Path] = []
+    seen: set[Path] = set()
+
+    def add(path: Path) -> None:
+        resolved = path.expanduser().resolve()
+        if resolved in seen:
+            return
+        seen.add(resolved)
+        homes.append(resolved)
+
+    add(Path.home())
+    sudo_user = os.environ.get("SUDO_USER")
+    if sudo_user:
+        try:
+            add(Path(pwd.getpwnam(sudo_user).pw_dir))
+        except KeyError:
+            add(Path(f"/home/{sudo_user}"))
+    return homes
+
+
+def _selenium_cache_roots() -> list[Path]:
+    return [
+        home / ".cache" / "selenium" / "chromedriver" for home in _home_dirs_to_search()
+    ]
+
+
+def backup_path(binary: Path) -> Path:
+    return binary.parent / f"{binary.name}{BACKUP_SUFFIX}"
 
 
 def find_chromedriver_binaries() -> list[Path]:
     candidates: list[Path] = []
     for base in (
-        Path.home() / ".cache" / "selenium" / "chromedriver",
+        *_selenium_cache_roots(),
         Path("/usr/local/bin"),
         Path("/usr/bin"),
     ):
@@ -53,6 +87,11 @@ def patch_chromedriver_binary(path: Path | str) -> bool:
         if not match:
             return False
 
+        bak = backup_path(target)
+        if not bak.is_file():
+            shutil.copy2(target, bak)
+            os.chmod(bak, 0o755)
+
         injection = match[0]
         replacement = b'{console.log("untrace chromedriver")}'.ljust(
             len(injection), b" "
@@ -69,6 +108,23 @@ def patch_chromedriver_binary(path: Path | str) -> bool:
     return True
 
 
+def unpatch_chromedriver_binary(path: Path | str) -> bool:
+    target = Path(path)
+    bak = backup_path(target)
+    if not bak.is_file():
+        return False
+    if not target.is_file():
+        shutil.copy2(bak, target)
+        os.chmod(target, 0o755)
+        bak.unlink(missing_ok=True)
+        return True
+
+    shutil.copy2(bak, target)
+    os.chmod(target, 0o755)
+    bak.unlink(missing_ok=True)
+    return True
+
+
 def patch_all_chromedrivers() -> list[Path]:
     patched: list[Path] = []
     for binary in find_chromedriver_binaries():
@@ -78,3 +134,20 @@ def patch_all_chromedrivers() -> list[Path]:
         except OSError:
             continue
     return patched
+
+
+def unpatch_all_chromedrivers() -> list[Path]:
+    unpatched: list[Path] = []
+    for binary in find_chromedriver_binaries():
+        try:
+            content = binary.read_bytes()
+        except OSError:
+            continue
+        if not is_patched(content):
+            continue
+        try:
+            if unpatch_chromedriver_binary(binary):
+                unpatched.append(binary)
+        except OSError:
+            continue
+    return unpatched

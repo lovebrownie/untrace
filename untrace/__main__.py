@@ -367,6 +367,14 @@ def restore_google_chrome_launcher() -> bool:
     return True
 
 
+def backup_chrome_launcher_if_needed() -> None:
+    bpath = backup_path_linux()
+    if os.path.isfile(bpath) or not os.path.isfile(CHROME_SCRIPT):
+        return
+    shutil.copy2(CHROME_SCRIPT, bpath)
+    os.chmod(bpath, 0o755)
+
+
 def backup_chrome_binary_if_needed() -> None:
     chrome_real = chrome_real_path()
     if os.path.isfile(chrome_real):
@@ -502,6 +510,7 @@ def install_linux(*, stealth: bool = False, flags: bool = False):
     cfg = _resolve_install_config(stealth=stealth, flags=flags)
 
     already_wrapped = is_chrome_wrapped_linux()
+    backup_chrome_launcher_if_needed()
     backup_chrome_binary_if_needed()
 
     if cfg.get("js_injection", True):
@@ -520,6 +529,17 @@ def install_linux(*, stealth: bool = False, flags: bool = False):
 
     print("Installed." if not already_wrapped else "Updated.")
     _print_active_features(cfg)
+    if cfg.get("js_injection", True) and not injector.is_installed():
+        print(
+            "Warning: extension files missing under /etc/untrace after install.",
+            file=sys.stderr,
+        )
+    if (injector.USER_UNTRACE_ROOT / "seed_profile.py").is_file():
+        print(
+            "Note: ~/.local/share/untrace takes priority over /etc/untrace — "
+            "run python -m untrace --deploy --stealth --flags to update what Chrome uses.",
+            file=sys.stderr,
+        )
 
 
 def uninstall_linux():
@@ -540,7 +560,15 @@ def uninstall_linux():
     restore_google_chrome_launcher()
     injector.remove()
     config.clear()
+    unpatched_drivers = chromedriver_patch.unpatch_all_chromedrivers()
+    if unpatched_drivers:
+        print(f"Unpatched {len(unpatched_drivers)} chromedriver(s).")
     print("Uninstalled.")
+    if injector.USER_UNTRACE_ROOT.is_dir():
+        print(
+            f"Note: user deploy at {injector.USER_UNTRACE_ROOT} was not removed.",
+            file=sys.stderr,
+        )
 
 
 REAL_EXE_NAME = "chrome_real.exe"

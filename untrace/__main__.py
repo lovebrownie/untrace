@@ -14,8 +14,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from untrace import (chromedriver_patch, config, injector,
-                     selenium_manager_patch)
+from untrace import chromedriver_patch, config, injector, selenium_manager_patch
 
 IS_WINDOWS = platform.system() == "Windows"
 
@@ -427,7 +426,10 @@ def build_chrome_wrapper_script(
   _read_launch_flags
   exec -a "$0" "${_untrace_runner[@]}" "${_untrace_launch_flags[@]}" "$@" """
 
-    return "#!/bin/bash\n" f"{chrome_real_line}\n" + f"""
+    return (
+        "#!/bin/bash\n"
+        f"{chrome_real_line}\n"
+        + f"""
 {UNTRACE_BEGIN}
 {SEED_EXTENSION_BASH}
 {READ_LAUNCH_FLAGS_BASH}
@@ -445,6 +447,7 @@ else
 fi
 {UNTRACE_END}
 """
+    )
 
 
 def _strip_legacy_launcher_patch(content: str) -> str:
@@ -1024,8 +1027,6 @@ def install_windows(*, stealth: bool = False, flags: bool = False):
         injector.setup(scripts, CHROME_SCRIPTS)
     else:
         injector.remove()
-
-    launch_flags = chrome_launch_flags()
 
     already_patched = os.path.isfile(real_exe)
 

@@ -105,7 +105,7 @@ Requires a prior `python -m untrace --deploy --stealth --flags --chromedriver` (
 
 | Test | Target |
 |------|--------|
-| `test_bot_sannysoft` | [bot.sannysoft.com](https://bot.sannysoft.com/) |
+| `test_bot_sannysoft` | [bot.sannysoft.com](https://bot.sannysoft.com/) — Intoli + FPScanner tables all green |
 | `test_bot_rebrowser` | [rebrowser-bot-detector](https://bot-detector.rebrowser.net/) — every check green; `mainWorldExecution`, `exposeFunctionLeak`, and `useragent` may stay neutral |
 | `test_bot_akamai` | [hilton.com](https://www.hilton.com/en/) — Akamai BMP behavioral challenge |
 | `test_bot_fpscanner` | [fpscanner.com/demo](https://fpscanner.com/demo/) |
@@ -163,6 +163,7 @@ tests/
 
 ```bash
 poetry install
-poetry run task lint
+poetry run task lint          # format + fix with Ruff
+poetry run task lint-check    # verify only (CI)
 pytest
 ```

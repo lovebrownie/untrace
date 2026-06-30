@@ -1,5 +1,4 @@
 import json
-from pathlib import Path
 
 from untrace import injector
 from untrace.__main__ import deploy_linux

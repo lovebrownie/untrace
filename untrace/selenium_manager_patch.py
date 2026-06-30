@@ -6,8 +6,6 @@ import shutil
 import sysconfig
 from pathlib import Path
 
-from untrace import injector
-
 PATCH_MARKER = "untrace selenium-manager"
 BACKUP_SUFFIX = ".untrace.bak"
 WRAPPER_SCRIPT = """#!/bin/bash

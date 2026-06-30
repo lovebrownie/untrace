@@ -5,9 +5,7 @@ def test_patch_chromedriver_binary_replaces_cdc_block(tmp_path):
     driver = tmp_path / "chromedriver"
     injection = b"{window.cdc_adoQpoasnfa76pfcZLmcfl_Array = window.Array;};"
     original = (
-        b"prefix"
-        + injection
-        + b"enable-automation\x00test-type=webdriver\x00suffix"
+        b"prefix" + injection + b"enable-automation\x00test-type=webdriver\x00suffix"
     )
     driver.write_bytes(original)
     driver.chmod(0o755)
@@ -34,9 +32,7 @@ def test_unpatch_chromedriver_binary_restores_backup(tmp_path):
     driver = tmp_path / "chromedriver"
     injection = b"{window.cdc_adoQpoasnfa76pfcZLmcfl_Array = window.Array;};"
     original = (
-        b"prefix"
-        + injection
-        + b"enable-automation\x00test-type=webdriver\x00suffix"
+        b"prefix" + injection + b"enable-automation\x00test-type=webdriver\x00suffix"
     )
     driver.write_bytes(original)
     driver.chmod(0o755)

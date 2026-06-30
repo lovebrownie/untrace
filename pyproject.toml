@@ -8,11 +8,22 @@ dependencies = ["taskipy (>=1.14.1,<2.0.0)"]
 
 [dependency-groups]
 dev = [
-    "black (>=26.5.1,<27.0.0)",
-    "isort (>=8.0.1,<9.0.0)",
+    "ruff (>=0.14.0,<0.15.0)",
     "selenium (>=4.45.0,<5.0.0)",
     "pytest (>=9.1.1,<10.0.0)"
 ]
 
+[tool.ruff]
+target-version = "py314"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["untrace"]
+
 [tool.taskipy.tasks]
-lint = { cmd = "black untrace/ --target-version py314 && isort untrace/", help = "Run linting tools" }
+lint = { cmd = "ruff format untrace/ tests/ && ruff check --fix untrace/ tests/", help = "Format and lint with Ruff" }
+lint-check = { cmd = "ruff format --check untrace/ tests/ && ruff check untrace/ tests/", help = "Verify formatting and lint without fixing" }

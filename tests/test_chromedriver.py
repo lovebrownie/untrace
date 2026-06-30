@@ -13,6 +13,8 @@ BLOCKED_MARKERS = (
 )
 
 REBROWSER_TEST_URL = "https://bot-detector.rebrowser.net/"
+SANNY_SOFT_URL = "https://bot.sannysoft.com/"
+SANNY_SOFT_FPSCANNER_LAST = "VIDEO_CODECS"
 
 # rating 0 is OK for checks Selenium cannot trigger without failing another probe.
 REBROWSER_OPTIONAL_NEUTRAL = frozenset(
@@ -153,10 +155,119 @@ def _wait_for_rebrowser_detections(driver) -> list[dict]:
     return _rebrowser_detections(driver)
 
 
+def _sannysoft_results(driver) -> dict:
+    return driver.execute_script(
+        """
+            const normalize = (text) => (text || '').replace(/\\s+/g, ' ').trim();
+            const cellStatus = (cell) => {
+              if (!cell) return 'neutral';
+              if (cell.classList.contains('failed')) return 'failed';
+              if (cell.classList.contains('warn')) return 'warn';
+              if (cell.classList.contains('passed')) return 'passed';
+              return 'neutral';
+            };
+
+            const intoli = [];
+            const intoliTable = document.querySelector('table');
+            if (intoliTable) {
+              for (const row of intoliTable.querySelectorAll('tr')) {
+                const cells = [...row.querySelectorAll('td')];
+                if (cells.length < 2) continue;
+                const resultCell = cells[1];
+                intoli.push({
+                  name: normalize(cells[0].innerText),
+                  result: normalize(resultCell.innerText),
+                  status: cellStatus(resultCell),
+                });
+              }
+            }
+
+            const fpscanner = [];
+            const fpTable = document.getElementById('fp2');
+            if (fpTable) {
+              for (const row of fpTable.querySelectorAll('tr')) {
+                const cells = [...row.querySelectorAll('td')];
+                if (cells.length < 2) continue;
+                fpscanner.push({
+                  name: normalize(cells[0].innerText),
+                  status: normalize(cells[1].innerText).toLowerCase(),
+                });
+              }
+            }
+
+            return { intoli, fpscanner };
+            """
+    ) or {"intoli": [], "fpscanner": []}
+
+
+def _sannysoft_scans_complete(results: dict) -> bool:
+    fpscanner = results.get("fpscanner") or []
+    fpscanner_names = {row.get("name") for row in fpscanner}
+    if SANNY_SOFT_FPSCANNER_LAST not in fpscanner_names:
+        return False
+
+    intoli = results.get("intoli") or []
+    webdriver = next(
+        (
+            row
+            for row in intoli
+            if row.get("name", "").startswith("WebDriver")
+            and "Advanced" not in row.get("name", "")
+        ),
+        None,
+    )
+    if not webdriver:
+        return False
+
+    result = (webdriver.get("result") or "").lower()
+    return result not in {"", "present (failed)"}
+
+
+def _sannysoft_failures(results: dict) -> list[str]:
+    failures: list[str] = []
+
+    for row in results.get("intoli") or []:
+        name = row.get("name") or "?"
+        result = row.get("result") or ""
+        status = row.get("status") or "neutral"
+
+        if status == "failed":
+            failures.append(f"Intoli {name}: {result}")
+            continue
+        if status == "warn":
+            failures.append(f"Intoli {name}: warn ({result})")
+            continue
+        if "headlesschrome" in result.lower():
+            failures.append(f"Intoli {name}: HeadlessChrome in user agent")
+
+    for row in results.get("fpscanner") or []:
+        name = row.get("name") or "?"
+        status = (row.get("status") or "").lower()
+        if status != "ok":
+            failures.append(f"FPScanner {name}: {status or 'missing status'}")
+
+    return failures
+
+
+def _wait_for_sannysoft_results(driver) -> dict:
+    def ready(d) -> bool:
+        return _sannysoft_scans_complete(_sannysoft_results(d))
+
+    _wait(driver).until(ready)
+    return _sannysoft_results(driver)
+
+
+def _assert_sannysoft_clean(driver) -> None:
+    _assert_page_loaded(driver)
+    results = _wait_for_sannysoft_results(driver)
+    failures = _sannysoft_failures(results)
+    assert not failures, f"bot.sannysoft.com failures: {failures}"
+
+
 def test_bot_sannysoft(chrome_driver):
-    chrome_driver.get("https://bot.sannysoft.com/")
+    chrome_driver.get(SANNY_SOFT_URL)
     _wait_for_page_ready(chrome_driver)
-    _assert_page_loaded(chrome_driver)
+    _assert_sannysoft_clean(chrome_driver)
 
 
 def test_bot_rebrowser(chrome_driver):

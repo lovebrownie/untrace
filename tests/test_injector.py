@@ -111,9 +111,7 @@ def temp_registration(monkeypatch, tmp_path):
     monkeypatch.setattr(injector, "LINUX_CHROME_POLICY_FILE", policy_file)
     monkeypatch.setattr(injector, "LINUX_CHROME_EXTERNAL_DIRS", external_dirs)
 
-    fake_pubkey_b64 = (
-        "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAq42dTgptg7Xs8zG6VVRVNu75ltwqSwFFXKQCQS3Ho8An/9xEAbIgw0+3l4+lD9gDbdm/XES+J+abFlXxswIDtXK0V/xO5HJSS4DfKzfuRPi4kwSMI6CboqpShUFEl/HAWSP7pNjo0EIZ9eh9bkCDNbvZGtecMdIyMm0hcA8zJ8PCyJTojSMomydvgw0E5Bn4URJS8GjpcoyK+T1ibmyZY+r+CJsOt92/iJ5Ckfs7UaLfX+rDIDe/ygwbS2zw97fsCSJHlUEUStmD8zhhi6gG0U6swa0h/JEOGD3DpA0TtOfVmfogA8jP3HLAJGbC5Iimdag12slPwlD1GQyrDtewfwIDAQAB"
-    )
+    fake_pubkey_b64 = "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAq42dTgptg7Xs8zG6VVRVNu75ltwqSwFFXKQCQS3Ho8An/9xEAbIgw0+3l4+lD9gDbdm/XES+J+abFlXxswIDtXK0V/xO5HJSS4DfKzfuRPi4kwSMI6CboqpShUFEl/HAWSP7pNjo0EIZ9eh9bkCDNbvZGtecMdIyMm0hcA8zJ8PCyJTojSMomydvgw0E5Bn4URJS8GjpcoyK+T1ibmyZY+r+CJsOt92/iJ5Ckfs7UaLfX+rDIDe/ygwbS2zw97fsCSJHlUEUStmD8zhhi6gG0U6swa0h/JEOGD3DpA0TtOfVmfogA8jP3HLAJGbC5Iimdag12slPwlD1GQyrDtewfwIDAQAB"
     monkeypatch.setattr(injector, "_public_key_base64", lambda: fake_pubkey_b64)
     monkeypatch.setattr(injector, "_ensure_extension_private_key", lambda: None)
     root.mkdir(parents=True, exist_ok=True)
@@ -162,7 +160,10 @@ def test_register_system_extension(temp_registration, monkeypatch):
     injector.register_system_extension()
 
     policy = json.loads(data["policy_file"].read_text())
-    assert policy["ExtensionSettings"][expected_id]["installation_mode"] == "force_installed"
+    assert (
+        policy["ExtensionSettings"][expected_id]["installation_mode"]
+        == "force_installed"
+    )
     for ext_dir_path in data["external_dirs"]:
         reg = json.loads((ext_dir_path / f"{expected_id}.json").read_text())
         assert reg["external_crx"] == str(data["crx_path"])
@@ -203,5 +204,8 @@ def test_seed_extension_into_profile(temp_untrace):
     assert seeded.is_dir()
 
     prefs = json.loads((profile / "Default" / "Preferences").read_text())
-    assert prefs["extensions"]["settings"][ext_id]["location"] == injector.LOCATION_UNPACKED
+    assert (
+        prefs["extensions"]["settings"][ext_id]["location"]
+        == injector.LOCATION_UNPACKED
+    )
     assert prefs["extensions"]["ui"]["developer_mode"] is True

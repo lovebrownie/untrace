@@ -12,6 +12,13 @@ BLOCKED_MARKERS = (
     "something went wrong",
 )
 
+REBROWSER_TEST_URL = "https://bot-detector.rebrowser.net/"
+
+# rating 0 is OK for checks Selenium cannot trigger without failing another probe.
+REBROWSER_OPTIONAL_NEUTRAL = frozenset(
+    {"mainWorldExecution", "exposeFunctionLeak", "useragent"}
+)
+
 
 def _wait(driver) -> WebDriverWait:
     return WebDriverWait(driver, PAGE_TIMEOUT)
@@ -98,22 +105,6 @@ def _assert_fpscanner_clean(driver) -> None:
     )
 
 
-def test_bot_sannysoft_loads(chrome_driver):
-    chrome_driver.get("https://bot.sannysoft.com/")
-    _wait_for_page_ready(chrome_driver)
-    _assert_page_loaded(chrome_driver)
-
-
-AKAMAI_TEST_URL = "https://www.hilton.com/en/"
-
-REBROWSER_TEST_URL = "https://bot-detector.rebrowser.net/"
-
-REBROWSER_REQUIRED_PASS = (
-    "runtimeEnableLeak",
-    "navigatorWebdriver",
-)
-
-
 def _rebrowser_detections(driver) -> list[dict]:
     return (
         driver.execute_script(
@@ -128,42 +119,68 @@ def _rebrowser_detections(driver) -> list[dict]:
 
 
 def _rebrowser_failures(detections: list[dict]) -> list[str]:
-    by_type = {item["type"]: item for item in detections if item.get("type")}
     failures: list[str] = []
-    for name in REBROWSER_REQUIRED_PASS:
-        item = by_type.get(name)
-        if not item:
-            failures.append(f"{name} missing from rebrowser detections")
-            continue
+    for item in detections:
+        name = item.get("type") or "?"
         rating = item.get("rating", 1)
+        note = (item.get("note") or "").strip()
+
+        if name in REBROWSER_OPTIONAL_NEUTRAL:
+            if rating >= 1:
+                failures.append(f"{name} failed (rating={rating}, note={note[:160]!r})")
+            continue
+
         if rating >= 0:
-            note = (item.get("note") or "").strip()
-            failures.append(f"{name} failed (rating={rating}, note={note[:160]!r})")
+            failures.append(f"{name} not green (rating={rating}, note={note[:160]!r})")
     return failures
+
+
+def _trigger_rebrowser_optional_checks(driver) -> None:
+    driver.execute_script(
+        """
+        if (typeof window.dummyFn === 'function') {
+          window.dummyFn();
+        }
+        document.getElementById('detections-json');
+        """
+    )
 
 
 def _wait_for_rebrowser_detections(driver) -> list[dict]:
     def ready(d) -> bool:
-        return not _rebrowser_failures(_rebrowser_detections(d))
+        detections = _rebrowser_detections(d)
+        if len(detections) < 8:
+            return False
+        return not _rebrowser_failures(detections)
 
     _wait(driver).until(ready)
     return _rebrowser_detections(driver)
 
 
-def test_bot_rebrowser_detector_clean(chrome_driver):
+def test_bot_sannysoft(chrome_driver):
+    chrome_driver.get("https://bot.sannysoft.com/")
+    _wait_for_page_ready(chrome_driver)
+    _assert_page_loaded(chrome_driver)
+
+
+def test_bot_rebrowser(chrome_driver):
     chrome_driver.get(REBROWSER_TEST_URL)
+    _wait(chrome_driver).until(
+        lambda d: d.execute_script("return typeof window.dummyFn === 'function'")
+    )
+    _trigger_rebrowser_optional_checks(chrome_driver)
     detections = _wait_for_rebrowser_detections(chrome_driver)
     failures = _rebrowser_failures(detections)
     assert not failures, f"rebrowser-bot-detector failures: {failures}"
 
 
-def test_bot_akamai_loads(chrome_driver):
-    chrome_driver.get(AKAMAI_TEST_URL)
+def test_bot_akamai(chrome_driver):
+    chrome_driver.get("https://www.hilton.com/en/")
     _wait_for_page_ready(chrome_driver)
     _assert_page_loaded(chrome_driver, title_contains="hilton")
 
 
-def test_fpscanner_demo_loads(chrome_driver):
+def test_bot_fpscanner(chrome_driver):
     chrome_driver.get("https://fpscanner.com/demo/")
     _wait(chrome_driver).until(
         EC.text_to_be_present_in_element((By.TAG_NAME, "body"), "Bot Detection")
@@ -171,7 +188,7 @@ def test_fpscanner_demo_loads(chrome_driver):
     _assert_fpscanner_clean(chrome_driver)
 
 
-def test_untrace_extension_listed_on_chrome_extensions(chrome_driver):
+def test_untrace_extension(chrome_driver):
     chrome_driver.get("chrome://extensions/")
     _wait(chrome_driver).until(
         lambda d: d.execute_script("""

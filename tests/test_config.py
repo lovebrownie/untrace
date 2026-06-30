@@ -91,7 +91,7 @@ def test_chrome_wrapper_uses_random_profile_only_when_enabled():
 
     assert "chrome_random_profiles" in random_on
     assert "chrome_random_profiles" not in random_off
-    assert '.config/google-chrome' in random_off
+    assert ".config/google-chrome" in random_off
 
 
 def test_chrome_wrapper_seeds_extension_for_selenium():

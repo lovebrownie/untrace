@@ -248,9 +248,7 @@ def extension_id() -> str:
 
 def _extension_version() -> str:
     ts = int(datetime.datetime.now(datetime.timezone.utc).timestamp())
-    return (
-        f"1.{(ts // (65536 * 65536)) % 65536}." f"{(ts // 65536) % 65536}.{ts % 65536}"
-    )
+    return f"1.{(ts // (65536 * 65536)) % 65536}.{(ts // 65536) % 65536}.{ts % 65536}"
 
 
 def wrap_iife(source: str, args: list | None = None) -> str:
@@ -470,7 +468,7 @@ def remove_user_deploys() -> list[Path]:
 
 
 def _deploy_seed_script() -> None:
-    script = f"""#!/usr/bin/env python3
+    script = """#!/usr/bin/env python3
 from __future__ import annotations
 
 import base64
@@ -496,7 +494,7 @@ def extension_id_from_public_key(public_key_b64: str) -> str:
 
 def extension_settings_entry(ext_id: str, manifest: dict, dest: Path) -> dict:
     install_time = str(int(time.time() * 1_000_000))
-    return {{
+    return {
         "location": LOCATION_UNPACKED,
         "path": str(dest),
         "state": 1,
@@ -504,7 +502,7 @@ def extension_settings_entry(ext_id: str, manifest: dict, dest: Path) -> dict:
         "was_installed_by_default": False,
         "was_installed_by_oem": False,
         "first_install_time": install_time,
-    }}
+    }
 
 
 def seed(profile_dir: str) -> None:
@@ -514,7 +512,7 @@ def seed(profile_dir: str) -> None:
         try:
             cfg = json.loads(config_path.read_text())
         except Exception:
-            cfg = {{}}
+            cfg = {}
         if not cfg.get("js_injection", True):
             return
 
@@ -532,16 +530,16 @@ def seed(profile_dir: str) -> None:
     shutil.copytree(EXTENSION_DIR, dest)
 
     prefs_path = profile / "Default" / "Preferences"
-    prefs: dict = {{}}
+    prefs: dict = {}
     if prefs_path.is_file():
         try:
             prefs = json.loads(prefs_path.read_text())
         except Exception:
-            prefs = {{}}
+            prefs = {}
 
-    extensions = prefs.setdefault("extensions", {{}})
-    extensions.setdefault("ui", {{}})["developer_mode"] = True
-    extensions.setdefault("settings", {{}})[ext_id] = extension_settings_entry(
+    extensions = prefs.setdefault("extensions", {})
+    extensions.setdefault("ui", {})["developer_mode"] = True
+    extensions.setdefault("settings", {})[ext_id] = extension_settings_entry(
         ext_id, manifest, dest
     )
     prefs_path.parent.mkdir(parents=True, exist_ok=True)
@@ -554,7 +552,7 @@ if __name__ == "__main__":
     try:
         seed(sys.argv[1])
     except Exception as exc:
-        print(f"[untrace] seed_profile failed: {{exc}}", file=sys.stderr)
+        print(f"[untrace] seed_profile failed: {exc}", file=sys.stderr)
         sys.exit(1)
 """
     SEED_PROFILE_SCRIPT.write_text(script)

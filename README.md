@@ -105,11 +105,11 @@ Requires a prior `python -m untrace --deploy --stealth --flags --chromedriver` (
 
 | Test | Target |
 |------|--------|
-| `test_bot_sannysoft_loads` | [bot.sannysoft.com](https://bot.sannysoft.com/) |
-| `test_bot_rebrowser_detector_clean` | [rebrowser-bot-detector](https://bot-detector.rebrowser.net/) — `runtimeEnableLeak` and `navigatorWebdriver` must pass |
-| `test_bot_akamai_loads` | [hilton.com](https://www.hilton.com/en/) — Akamai BMP behavioral challenge |
-| `test_fpscanner_demo_loads` | [fpscanner.com/demo](https://fpscanner.com/demo/) |
-| `test_untrace_extension_listed_on_chrome_extensions` | `chrome://extensions/` |
+| `test_bot_sannysoft` | [bot.sannysoft.com](https://bot.sannysoft.com/) |
+| `test_bot_rebrowser` | [rebrowser-bot-detector](https://bot-detector.rebrowser.net/) — every check green; `mainWorldExecution`, `exposeFunctionLeak`, and `useragent` may stay neutral |
+| `test_bot_akamai` | [hilton.com](https://www.hilton.com/en/) — Akamai BMP behavioral challenge |
+| `test_bot_fpscanner` | [fpscanner.com/demo](https://fpscanner.com/demo/) |
+| `test_untrace_extension` | `chrome://extensions/` |
 
 ## Custom scripts
 

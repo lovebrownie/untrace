@@ -16,6 +16,7 @@ def chrome_driver():
     if HEADLESS:
         options.add_argument("--headless=new")
     driver = webdriver.Chrome(options=options)
+    driver.set_script_timeout(30)
     try:
         yield driver
     finally:

@@ -24,33 +24,29 @@ def _wait(driver) -> WebDriverWait:
     return WebDriverWait(driver, PAGE_TIMEOUT)
 
 
-def _page_has_content(driver) -> bool:
+def _body_text(driver) -> str:
     try:
-        return bool(
-            driver.execute_script(
-                """
-                const body = (document.body && document.body.innerText || '').trim();
-                return body.length > 30;
-                """
-            )
-        )
+        return driver.find_element(By.TAG_NAME, "body").text.strip()
     except Exception:
-        return False
-
-
-def _wait_for_page_ready(driver) -> None:
-    _wait(driver).until(_page_has_content)
+        return ""
 
 
 def _page_content(driver) -> tuple[str, str]:
-    title = (driver.title or "").strip()
-    body = (
-        driver.execute_script(
-            "return (document.body && document.body.innerText || '').trim();"
-        )
-        or ""
-    ).strip()
-    return title, body
+    return (driver.title or "").strip(), _body_text(driver)
+
+
+def _page_passes_checks(driver, *, title_contains: str | None = None) -> bool:
+    title, body = _page_content(driver)
+    if not title or not body or len(body) <= 30:
+        return False
+    if title_contains and title_contains.lower() not in title.lower():
+        return False
+    combined = f"{title}\n{body}".lower()
+    return not any(marker in combined for marker in BLOCKED_MARKERS)
+
+
+def _wait_for_page_ready(driver, *, title_contains: str | None = None) -> None:
+    _wait(driver).until(lambda d: _page_passes_checks(d, title_contains=title_contains))
 
 
 def _fpscanner_failures(body: str) -> list[str]:
@@ -176,7 +172,7 @@ def test_bot_rebrowser(chrome_driver):
 
 def test_bot_akamai(chrome_driver):
     chrome_driver.get("https://www.hilton.com/en/")
-    _wait_for_page_ready(chrome_driver)
+    _wait_for_page_ready(chrome_driver, title_contains="hilton")
     _assert_page_loaded(chrome_driver, title_contains="hilton")
 
 

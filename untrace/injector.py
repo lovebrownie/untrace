@@ -3,17 +3,25 @@ from __future__ import annotations
 import base64
 import datetime
 import hashlib
+import io
 import json
 import os
 import platform
-import pwd
 import shutil
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
+import zipfile
 from pathlib import Path
 
 IS_WINDOWS = platform.system() == "Windows"
+
+if not IS_WINDOWS:
+    import pwd
+else:
+    pwd = None  # type: ignore[assignment]
 
 if IS_WINDOWS:
     SYSTEM_UNTRACE_ROOT = (
@@ -36,6 +44,9 @@ SEED_PROFILE_SCRIPT: Path
 
 
 def user_deploy_roots() -> list[Path]:
+    if IS_WINDOWS:
+        return [USER_UNTRACE_ROOT] if USER_UNTRACE_ROOT else []
+
     homes: list[Path] = []
     seen: set[Path] = set()
 
@@ -48,7 +59,7 @@ def user_deploy_roots() -> list[Path]:
 
     add_home(Path.home())
     sudo_user = os.environ.get("SUDO_USER")
-    if sudo_user:
+    if sudo_user and pwd is not None:
         try:
             add_home(Path(pwd.getpwnam(sudo_user).pw_dir))
         except KeyError:
@@ -121,6 +132,27 @@ CHROME_REAL_LINUX = "/opt/google/chrome/chrome_real"
 
 LOCATION_UNPACKED = 4
 
+WEBSTORE_EXTENSION_ID = "mgnlenokophofdnmlabkgpmlnolgomgj"
+WEBSTORE_UPDATE_URL = "https://clients2.google.com/service/update2/crx"
+WEBSTORE_EXTENSION_URL = (
+    f"https://chromewebstore.google.com/detail/untrace-injector/{WEBSTORE_EXTENSION_ID}"
+)
+WEBSTORE_HTTP_PORT = 19264
+_WINDOWS_FORCE_LIST_KEY = r"SOFTWARE\Policies\Google\Chrome\ExtensionInstallForcelist"
+_WINDOWS_INSTALL_SOURCES_KEY = (
+    r"SOFTWARE\Policies\Google\Chrome\ExtensionInstallSources"
+)
+_WINDOWS_EXTERNAL_EXTENSIONS_KEY = r"SOFTWARE\Wow6432Node\Google\Chrome\Extensions"
+_WINDOWS_CRX_DOWNLOAD_URL = (
+    "https://clients2.google.com/service/update2/crx"
+    "?response=redirect&prodversion=9999.0.0.0&acceptformat=crx3"
+    f"&x=id%3D{WEBSTORE_EXTENSION_ID}%26installsource%3Dondemand%26uc"
+)
+_WINDOWS_LOCAL_UPDATE_URL = f"http://127.0.0.1:{WEBSTORE_HTTP_PORT}/updates.xml"
+_WINDOWS_LOCAL_CRX_URL = f"http://127.0.0.1:{WEBSTORE_HTTP_PORT}/untrace-injector.crx"
+# Non-enterprise Chrome blocks non-Web-Store force-install URLs ([BLOCKED] in chrome://policy).
+_WINDOWS_FORCE_VALUE = f"{WEBSTORE_EXTENSION_ID};{WEBSTORE_UPDATE_URL}"
+
 DEFAULT_CUSTOM_JS = """// Optional custom JavaScript — runs after all stealth evasions.
 // Edit this file and restart Chrome to apply changes.
 """
@@ -145,13 +177,13 @@ def is_installed() -> bool:
 
 def is_policy_registered() -> bool:
     if IS_WINDOWS:
-        return False
+        return is_windows_webstore_extension_registered()
     return LINUX_CHROME_POLICY_FILE.is_file()
 
 
 def is_fully_registered() -> bool:
     if IS_WINDOWS:
-        return False
+        return is_windows_webstore_extension_registered()
     if not is_installed():
         return False
     if not LINUX_CHROME_POLICY_FILE.is_file() or not EXTENSION_CRX_PATH.is_file():
@@ -164,6 +196,342 @@ def is_fully_registered() -> bool:
         if not (ext_dir / f"{ext_id}.json").is_file():
             return False
     return True
+
+
+def _windows_webstore_root() -> Path:
+    return SYSTEM_UNTRACE_ROOT
+
+
+def _windows_webstore_crx_path() -> Path:
+    return _windows_webstore_root() / "untrace-injector.crx"
+
+
+def _windows_unpacked_extension_dir() -> Path:
+    return _windows_webstore_root() / "untrace-injector"
+
+
+def _windows_webstore_updates_path() -> Path:
+    return _windows_webstore_root() / "updates.xml"
+
+
+def _crx_version(crx_bytes: bytes) -> str:
+    idx = crx_bytes.find(b"PK\x03\x04")
+    if idx < 0:
+        return "1.0.0"
+    with zipfile.ZipFile(io.BytesIO(crx_bytes[idx:])) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+    version = manifest.get("version", "1.0.0")
+    return str(version)
+
+
+def _download_webstore_crx() -> tuple[bytes, str]:
+    request = urllib.request.Request(
+        _WINDOWS_CRX_DOWNLOAD_URL,
+        headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/131.0.0.0"
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=120) as response:
+            data = response.read()
+    except urllib.error.URLError as exc:
+        raise RuntimeError(
+            f"Failed to download Untrace Injector from the Chrome Web Store: {exc}"
+        ) from exc
+    if len(data) < 16 or not data.startswith(b"Cr24"):
+        raise RuntimeError(
+            "Chrome Web Store download did not return a CRX (check network / extension id)."
+        )
+    return data, _crx_version(data)
+
+
+def _unpack_crx(crx_bytes: bytes, dest: Path) -> None:
+    idx = crx_bytes.find(b"PK\x03\x04")
+    if idx < 0:
+        raise RuntimeError(
+            "CRX payload is missing (not a valid Chrome extension archive)."
+        )
+    if dest.exists():
+        shutil.rmtree(dest)
+    dest.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(io.BytesIO(crx_bytes[idx:])) as archive:
+        archive.extractall(dest)
+    if not (dest / "manifest.json").is_file():
+        raise RuntimeError(f"Unpacked extension is missing manifest.json at {dest}")
+
+
+def _write_windows_local_updates_xml(version: str) -> Path:
+    path = _windows_webstore_updates_path()
+    path.write_text(
+        "<?xml version='1.0' encoding='UTF-8'?>\n"
+        "<gupdate xmlns='http://www.google.com/update2/response' protocol='2.0'>\n"
+        f"  <app appid='{WEBSTORE_EXTENSION_ID}'>\n"
+        f"    <updatecheck codebase='{_WINDOWS_LOCAL_CRX_URL}' version='{version}' />\n"
+        "  </app>\n"
+        "</gupdate>\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _windows_reg_list_entries(key_path: str) -> dict[str, str]:
+    import winreg
+
+    entries: dict[str, str] = {}
+    try:
+        with winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE, key_path, 0, winreg.KEY_READ
+        ) as key:
+            i = 0
+            while True:
+                try:
+                    name, value, _ = winreg.EnumValue(key, i)
+                except OSError:
+                    break
+                if isinstance(value, str):
+                    entries[str(name)] = value
+                i += 1
+    except FileNotFoundError, OSError:
+        pass
+    return entries
+
+
+def _windows_force_list_entries() -> dict[str, str]:
+    return _windows_reg_list_entries(_WINDOWS_FORCE_LIST_KEY)
+
+
+def _set_windows_reg_list_value(key_path: str, match_prefix: str, value: str) -> None:
+    import winreg
+
+    entries = _windows_reg_list_entries(key_path)
+    existing_name = next(
+        (
+            name
+            for name, existing in entries.items()
+            if existing.startswith(match_prefix)
+        ),
+        None,
+    )
+    if existing_name is None:
+        used: set[int] = set()
+        for name in entries:
+            try:
+                used.add(int(name))
+            except ValueError:
+                pass
+        index = 1
+        while index in used:
+            index += 1
+        existing_name = str(index)
+
+    with winreg.CreateKeyEx(
+        winreg.HKEY_LOCAL_MACHINE, key_path, 0, winreg.KEY_SET_VALUE
+    ) as key:
+        winreg.SetValueEx(key, existing_name, 0, winreg.REG_SZ, value)
+
+
+def _clear_windows_reg_list_prefix(key_path: str, match_prefix: str) -> None:
+    import winreg
+
+    entries = _windows_reg_list_entries(key_path)
+    to_delete = [
+        name for name, value in entries.items() if value.startswith(match_prefix)
+    ]
+    if not to_delete:
+        return
+    try:
+        with winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE, key_path, 0, winreg.KEY_SET_VALUE
+        ) as key:
+            for name in to_delete:
+                winreg.DeleteValue(key, name)
+    except FileNotFoundError, OSError:
+        pass
+
+
+def _windows_external_extension_key() -> str:
+    return f"{_WINDOWS_EXTERNAL_EXTENSIONS_KEY}\\{WEBSTORE_EXTENSION_ID}"
+
+
+def _set_windows_external_extension_update_url() -> None:
+    import winreg
+
+    with winreg.CreateKeyEx(
+        winreg.HKEY_LOCAL_MACHINE,
+        _windows_external_extension_key(),
+        0,
+        winreg.KEY_SET_VALUE,
+    ) as key:
+        winreg.SetValueEx(key, "update_url", 0, winreg.REG_SZ, WEBSTORE_UPDATE_URL)
+
+
+def _clear_windows_external_extension() -> None:
+    import winreg
+
+    try:
+        winreg.DeleteKey(winreg.HKEY_LOCAL_MACHINE, _windows_external_extension_key())
+    except FileNotFoundError, OSError:
+        pass
+
+
+def is_windows_webstore_extension_registered() -> bool:
+    if not IS_WINDOWS:
+        return False
+    force = _windows_force_list_entries()
+    return any(
+        value == _WINDOWS_FORCE_VALUE
+        or (
+            value.startswith(f"{WEBSTORE_EXTENSION_ID};")
+            and WEBSTORE_UPDATE_URL in value
+        )
+        for value in force.values()
+    )
+
+
+def _windows_seed_script_path() -> Path:
+    return _windows_webstore_root() / "seed_profile.py"
+
+
+def _write_windows_seed_script() -> Path:
+    script = f'''#!/usr/bin/env python3
+from __future__ import annotations
+
+import json
+import shutil
+import sys
+import time
+from pathlib import Path
+
+UNTRACE_ROOT = Path(__file__).resolve().parent
+EXTENSION_DIR = UNTRACE_ROOT / "untrace-injector"
+EXT_ID = "{WEBSTORE_EXTENSION_ID}"
+LOCATION_UNPACKED = 4
+
+
+def seed(profile_dir: str) -> None:
+    config_path = UNTRACE_ROOT / "config.json"
+    if config_path.is_file():
+        try:
+            cfg = json.loads(config_path.read_text(encoding="utf-8"))
+        except Exception:
+            cfg = {{}}
+        if not cfg.get("js_injection", True):
+            return
+
+    manifest_path = EXTENSION_DIR / "manifest.json"
+    if not manifest_path.is_file():
+        return
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    ver = str(manifest.get("version", "0"))
+    profile = Path(profile_dir)
+    dest = profile / "Default" / "Extensions" / EXT_ID / ver
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.exists():
+        shutil.rmtree(dest)
+    shutil.copytree(EXTENSION_DIR, dest)
+
+    prefs_path = profile / "Default" / "Preferences"
+    prefs: dict = {{}}
+    if prefs_path.is_file():
+        try:
+            prefs = json.loads(prefs_path.read_text(encoding="utf-8"))
+        except Exception:
+            prefs = {{}}
+
+    install_time = str(int(time.time() * 1_000_000))
+    extensions = prefs.setdefault("extensions", {{}})
+    extensions.setdefault("ui", {{}})["developer_mode"] = True
+    extensions.setdefault("settings", {{}})[EXT_ID] = {{
+        "location": LOCATION_UNPACKED,
+        "path": str(dest),
+        "state": 1,
+        "manifest": manifest,
+        "was_installed_by_default": False,
+        "was_installed_by_oem": False,
+        "first_install_time": install_time,
+    }}
+    prefs_path.parent.mkdir(parents=True, exist_ok=True)
+    prefs_path.write_text(json.dumps(prefs, indent=2), encoding="utf-8")
+
+
+if __name__ == "__main__":
+    if len(sys.argv) != 2:
+        sys.exit(2)
+    try:
+        seed(sys.argv[1])
+    except Exception as exc:
+        print(f"[untrace] seed_profile failed: {{exc}}", file=sys.stderr)
+        sys.exit(1)
+'''
+    path = _windows_seed_script_path()
+    path.write_text(script, encoding="utf-8")
+    return path
+
+
+def register_windows_webstore_extension() -> str:
+    if not IS_WINDOWS:
+        raise RuntimeError("Web Store extension install is Windows-only")
+
+    crx_path = _windows_webstore_crx_path()
+    try:
+        crx_bytes, version = _download_webstore_crx()
+    except RuntimeError:
+        if not crx_path.is_file():
+            raise
+        crx_bytes = crx_path.read_bytes()
+        version = _crx_version(crx_bytes)
+
+    root = _windows_webstore_root()
+    root.mkdir(parents=True, exist_ok=True)
+    cfg_path = root / "config.json"
+    cfg: dict = {}
+    if cfg_path.is_file():
+        try:
+            cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError, OSError:
+            cfg = {}
+    cfg["js_injection"] = True
+    cfg_path.write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
+
+    crx_path.write_bytes(crx_bytes)
+    _unpack_crx(crx_bytes, _windows_unpacked_extension_dir())
+    _write_windows_local_updates_xml(version)
+    _write_windows_seed_script()
+    # Consumer Chrome only accepts Chrome Web Store update URLs for force-install.
+    _set_windows_reg_list_value(
+        _WINDOWS_FORCE_LIST_KEY, f"{WEBSTORE_EXTENSION_ID};", _WINDOWS_FORCE_VALUE
+    )
+    _clear_windows_reg_list_prefix(
+        _WINDOWS_INSTALL_SOURCES_KEY, f"http://127.0.0.1:{WEBSTORE_HTTP_PORT}"
+    )
+    _set_windows_external_extension_update_url()
+    return WEBSTORE_EXTENSION_ID
+
+
+def unregister_windows_webstore_extension() -> None:
+    if not IS_WINDOWS:
+        return
+
+    _clear_windows_reg_list_prefix(_WINDOWS_FORCE_LIST_KEY, f"{WEBSTORE_EXTENSION_ID};")
+    _clear_windows_reg_list_prefix(
+        _WINDOWS_INSTALL_SOURCES_KEY, f"http://127.0.0.1:{WEBSTORE_HTTP_PORT}"
+    )
+    _clear_windows_external_extension()
+    unpacked = _windows_unpacked_extension_dir()
+    if unpacked.is_dir():
+        shutil.rmtree(unpacked)
+    for path in (
+        _windows_webstore_crx_path(),
+        _windows_webstore_updates_path(),
+        _windows_seed_script_path(),
+    ):
+        if path.is_file():
+            path.unlink()
+
+
+def extension_launch_flags() -> list[str]:
+    return []
 
 
 def extension_id_from_public_key(public_key_b64: str) -> str:
@@ -185,10 +553,6 @@ def extension_settings_entry(ext_id: str, manifest: dict, dest: Path) -> dict:
         "was_installed_by_oem": False,
         "first_install_time": install_time,
     }
-
-
-def extension_launch_flags() -> list[str]:
-    return []
 
 
 def _extension_private_key_valid() -> bool:
@@ -344,7 +708,7 @@ def _pack_extension_crx(chrome_real: str = CHROME_REAL_LINUX) -> None:
 
 def register_system_extension(version: str = "1.0") -> str:
     if IS_WINDOWS:
-        return extension_id()
+        return register_windows_webstore_extension()
 
     ext_id = extension_id()
     _pack_extension_crx()
@@ -391,6 +755,7 @@ def register_system_extension(version: str = "1.0") -> str:
 
 def unregister_system_extension() -> None:
     if IS_WINDOWS:
+        unregister_windows_webstore_extension()
         return
 
     ext_id = None

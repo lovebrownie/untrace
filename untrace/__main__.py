@@ -750,8 +750,6 @@ def install_linux(
     )
     _sync_config_to_managed_roots(cfg)
 
-    already_wrapped = is_chrome_wrapped_linux()
-
     if cfg.get("js_injection", True):
         scripts = list(DEFAULT_CHROME_SCRIPTS)
         injector.setup(scripts, CHROME_SCRIPTS)
@@ -1654,7 +1652,9 @@ def install_windows(
                 print("Rolling back...", file=sys.stderr)
                 os.rename(real_exe, chrome_path)
             sys.exit(1)
-        if cfg.get("js_injection", True) and not warm_windows_profile_template(real_exe):
+        if cfg.get("js_injection", True) and not warm_windows_profile_template(
+            real_exe
+        ):
             print(
                 "Warning: could not warm Chrome profile template; "
                 "extension may install on first launch instead.",

@@ -6,12 +6,12 @@ alwaysApply: true
 
 # Untrace
 
-One **root** install (`sudo python -m untrace --install --stealth --flags --chromedriver`) wires the Chrome wrapper — do this once. After that, update with **no password**: `python -m untrace --deploy --stealth --flags --chromedriver`. Fix the wrapper, extension, and chromedriver — not the caller.
+One **root** install (`sudo python -m untrace --install --stealth --flags --chromedriver`) wires the Chrome wrapper, extension, and chromedriver. Re-run the same command to update. Fix the wrapper, extension, and chromedriver — not the caller.
 
 ## Install / uninstall
 
-- Feature flags are independent: `--stealth` (extension), `--flags` (Chrome wrapper + random profile), `--chromedriver` (CDC patch). Bare `--install` / `--deploy` enables all.
-- **`sudo --uninstall` must remove everything** — system Chrome wrapper (`chrome_real` restore), `/etc/untrace`, **and** user deploy at `~/.local/share/untrace` for `SUDO_USER` (not just `/root`). Unpatch chromedrivers. Never leave user deploy behind with a “not removed” note.
+- Feature flags are independent: `--stealth` (extension), `--flags` (Chrome wrapper + random profile), `--chromedriver` (CDC patch). Bare `--install` enables all.
+- **`sudo --uninstall` must remove everything** — system Chrome wrapper (`chrome_real` restore), `/etc/untrace`, **and** user tree at `~/.local/share/untrace` for `SUDO_USER` (not just `/root`). Unpatch chromedrivers. Never leave user tree behind with a “not removed” note.
 - Commands run under `sudo` must resolve the real user’s home via `SUDO_USER` / `injector.user_deploy_roots()` — not `Path.home()` as root.
 
 ## Windows
@@ -21,7 +21,7 @@ One **root** install (`sudo python -m untrace --install --stealth --flags --chro
 - **C# Chrome wrapper:** detect automation, strip chromedriver junk (but **never** `--enable-automation`), apply launcher flags, `WaitForExit`, Job Object `KILL_ON_JOB_CLOSE`. Manual and Selenium use `%TEMP%\chrome_random_profiles\profile_*`; Selenium `scoped_dir` is a junction into that tree.
 - **Never strip `--enable-automation` on Windows** (wrapper or chromedriver binary). Chrome exits under `--remote-debugging-port` without it.
 - **`pwd` / `geteuid` / Unix paths are Linux-only** — guard imports; use `%LOCALAPPDATA%\Untrace` / `%PROGRAMDATA%\Untrace` for deploy roots.
-- `--deploy` is not supported on Windows yet; use `--install` (Admin) for the wrapper + Web Store policy.
+- Use `--install` (Admin) for the wrapper + Web Store policy.
 - **Smart App Control / WDAC:** may block the unsigned Chrome wrapper and patched chromedriver — warn in README/CLI.
 
 ## No workarounds
@@ -36,9 +36,9 @@ One **root** install (`sudo python -m untrace --install --stealth --flags --chro
 - **`chrome_driver` is hands-off.** `tests/conftest.py` stays minimal: `webdriver.Chrome(options=Options())`, yield, quit. The only allowed toggle is the `HEADLESS` module variable (`False` by default; when `True`, pass `--headless=new`). Do **not** add anything else unless the user explicitly asks.
 - **Never add to `chrome_driver` or conftest:** pytest CLI options, `os.environ` / `SE_CHROME_BINARY` / `PATH` hacks, extra Chrome args beyond `HEADLESS`, custom capabilities, service config, retries, screenshots, logging, or “just in case” fixture logic.
 - If a bot test fails, fix untrace (wrapper, extension, chromedriver patch) — **not** `chrome_driver`.
-- Run: `pytest tests/test_chromedriver.py` (requires a prior `python -m untrace --deploy --stealth --flags --chromedriver` or `--install`).
+- Run: `pytest tests/test_chromedriver.py` (requires a prior `python -m untrace --install --stealth --flags --chromedriver`).
 - Stealth, flags, extension seeding, chromedriver arg stripping, and CDC patch come from the **installed untrace** stack.
-- **Never auto-run `--deploy` or `--install` from tests** — no autouse fixtures, conftest hooks, or subprocess calls that install/patch untrace before browser tests. The user controls install state; tests must not mutate it.
+- **Never auto-run `--install` from tests** — no autouse fixtures, conftest hooks, or subprocess calls that install/patch untrace before browser tests. The user controls install state; tests must not mutate it.
 
 ## When a bot / Akamai test fails
 

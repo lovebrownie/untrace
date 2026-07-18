@@ -640,15 +640,12 @@ def _print_active_features(cfg: dict | None = None) -> None:
         selenium_manager_enabled = False
     else:
         selenium_manager_enabled = _selenium_manager_patch_active()
-    ok, bad = ("OK", "NO") if IS_WINDOWS else ("✓", "✗")
+    ok, bad = "OK", "OFF"
     print(f"{ok if _effective_stealth_active() else bad} Stealth")
     print(f"{ok if flags_enabled else bad} Flags")
     print(f"{ok if wrapper_enabled else bad} Chrome wrapper")
     print(f"{ok if chromedriver_enabled else bad} Chromedriver patch")
-    if IS_WINDOWS:
-        print(f"{bad} Selenium-manager patch (disabled on Windows)")
-    else:
-        print(f"{ok if selenium_manager_enabled else bad} Selenium-manager patch")
+    print(f"{ok if selenium_manager_enabled else bad} Selenium-manager patch")
 
 
 def _installed_wrapper_stale() -> list[str]:
@@ -686,12 +683,6 @@ def status_linux():
         print(f"Warning: {issue}")
     if not is_chrome_wrapped_linux():
         print("Hint: run once with sudo: python -m untrace --install --stealth --flags")
-    elif not any(
-        (root / "seed_profile.py").is_file() for root in injector.user_deploy_roots()
-    ):
-        print(
-            "Hint: python -m untrace --deploy --stealth --flags (no password) updates extension"
-        )
 
 
 def _resolve_install_config(
@@ -743,60 +734,11 @@ def deploy_user_chrome_wrapper(
 def _refresh_user_wrappers(cfg: dict, launch_flags: list[str]) -> None:
     random_profile = bool(cfg.get("chrome_flags", False))
     for root in injector.user_deploy_roots():
-        if not (root / "chrome").is_file() and not (root / "seed_profile.py").is_file():
-            continue
         deploy_user_chrome_wrapper(
             launch_flags,
             deploy_root=root,
             random_profile=random_profile,
         )
-
-
-def _ensure_user_deploy_writable() -> None:
-    root = injector.get_untrace_root()
-    if root.exists() and not os.access(root, os.W_OK):
-        print(
-            f"Cannot write to {root} (permission denied). "
-            f"Fix ownership: sudo chown -R $USER {root}",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-
-def deploy_linux(
-    *, stealth: bool = False, flags: bool = False, chromedriver: bool = False
-):
-    injector.use_user_root()
-    _ensure_user_deploy_writable()
-    cfg = _resolve_install_config(
-        stealth=stealth, flags=flags, chromedriver=chromedriver
-    )
-
-    if cfg.get("js_injection", True):
-        scripts = list(DEFAULT_CHROME_SCRIPTS)
-        injector.setup(scripts, CHROME_SCRIPTS)
-    else:
-        injector.remove()
-
-    launch_flags = chrome_launch_flags()
-    _sync_launch_flags(launch_flags, injector.user_deploy_roots())
-    wrapper = deploy_user_chrome_wrapper(
-        launch_flags,
-        random_profile=bool(cfg.get("chrome_flags", False)),
-    )
-
-    _apply_chromedriver_patch(cfg)
-
-    print(f"Deployed to {injector.get_untrace_root()} (no root required).")
-    print(f"Selenium chrome wrapper: {wrapper}")
-    _print_active_features(cfg)
-    if not is_chrome_wrapped_linux():
-        print(
-            "Note: system Chrome wrapper not installed; Selenium uses the user wrapper above.",
-            file=sys.stderr,
-        )
-    for issue in _installed_wrapper_stale():
-        print(f"Warning: {issue}", file=sys.stderr)
 
 
 def install_linux(
@@ -840,18 +782,6 @@ def install_linux(
     if cfg.get("js_injection", True) and not injector.is_installed():
         print(
             "Warning: extension files missing under /etc/untrace after install.",
-            file=sys.stderr,
-        )
-    active_user_deploys = [
-        root
-        for root in injector.user_deploy_roots()
-        if (root / "seed_profile.py").is_file()
-    ]
-    if active_user_deploys:
-        paths = ", ".join(str(root) for root in active_user_deploys)
-        print(
-            f"Note: user deploy takes priority over /etc/untrace ({paths}) — "
-            "run python -m untrace --deploy --stealth --flags to update what Chrome uses.",
             file=sys.stderr,
         )
 
@@ -1794,14 +1724,6 @@ def install(*, stealth: bool = False, flags: bool = False, chromedriver: bool = 
     install_windows(**kwargs) if IS_WINDOWS else install_linux(**kwargs)
 
 
-def deploy(*, stealth: bool = False, flags: bool = False, chromedriver: bool = False):
-    kwargs = {"stealth": stealth, "flags": flags, "chromedriver": chromedriver}
-    if IS_WINDOWS:
-        print("--deploy is not supported on Windows yet.", file=sys.stderr)
-        sys.exit(1)
-    deploy_linux(**kwargs)
-
-
 def uninstall():
     uninstall_windows() if IS_WINDOWS else uninstall_linux()
 
@@ -1817,16 +1739,14 @@ def main():
         epilog=(
             "Examples:\n"
             "  sudo python3 -m untrace --install --stealth --flags --chromedriver\n"
-            "  python3 -m untrace --deploy --stealth --flags --chromedriver\n"
             "  pytest tests/test_chromedriver.py"
         ),
     )
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--install", action="store_true")
-    group.add_argument("--deploy", action="store_true")
     group.add_argument("--uninstall", action="store_true")
     group.add_argument("--status", action="store_true")
-    toggles = parser.add_argument_group("features (used with --install / --deploy)")
+    toggles = parser.add_argument_group("features (used with --install)")
     toggles.add_argument(
         "--stealth",
         action="store_true",
@@ -1850,12 +1770,6 @@ def main():
 
     if args.install:
         install(
-            stealth=args.stealth,
-            flags=args.flags,
-            chromedriver=args.chromedriver,
-        )
-    elif args.deploy:
-        deploy(
             stealth=args.stealth,
             flags=args.flags,
             chromedriver=args.chromedriver,

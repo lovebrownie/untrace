@@ -636,16 +636,14 @@ def _print_active_features(cfg: dict | None = None) -> None:
         bool(cfg.get("chrome_wrapper", True)) and _chrome_wrapper_installed()
     )
     chromedriver_enabled = _chromedriver_patch_active()
-    if IS_WINDOWS:
-        selenium_manager_enabled = False
-    else:
-        selenium_manager_enabled = _selenium_manager_patch_active()
     ok, bad = "OK", "OFF"
     print(f"{ok if _effective_stealth_active() else bad} Stealth")
     print(f"{ok if flags_enabled else bad} Flags")
     print(f"{ok if wrapper_enabled else bad} Chrome wrapper")
     print(f"{ok if chromedriver_enabled else bad} Chromedriver patch")
-    print(f"{ok if selenium_manager_enabled else bad} Selenium-manager patch")
+    if not IS_WINDOWS:
+        selenium_manager_enabled = _selenium_manager_patch_active()
+        print(f"{ok if selenium_manager_enabled else bad} Selenium-manager patch")
 
 
 def _installed_wrapper_stale() -> list[str]:
@@ -678,6 +676,7 @@ def _installed_wrapper_stale() -> list[str]:
 def status_linux():
     print("Patched" if is_chrome_wrapped_linux() else "Not patched")
     print(f"Active untrace root: {injector.get_untrace_root()}")
+    print()
     _print_active_features()
     for issue in _installed_wrapper_stale():
         print(f"Warning: {issue}")
@@ -777,7 +776,7 @@ def install_linux(
     _refresh_user_wrappers(cfg, launch_flags)
     _apply_chromedriver_patch(cfg)
 
-    print("Installed." if not already_wrapped else "Updated.")
+    print()
     _print_active_features(cfg)
     if cfg.get("js_injection", True) and not injector.is_installed():
         print(
@@ -1587,6 +1586,7 @@ def status_windows():
         print("Patched")
     else:
         print("Not patched")
+    print()
     _print_active_features()
 
 
@@ -1601,27 +1601,26 @@ def install_windows(
     chrome_dir = os.path.dirname(chrome_path)
     real_exe = os.path.join(chrome_dir, REAL_EXE_NAME)
 
-    if chromedriver:
-        print(
-            "Warning: patched chromedriver.exe is unsigned; "
-            "Smart App Control / WDAC may block it (WinError 4551).",
-            file=sys.stderr,
-        )
-
-    print(
-        "Warning: if Smart App Control (or WDAC) is on, Windows may block the "
-        "unsigned Chrome wrapper and Selenium/Chrome may fail to launch.",
-        file=sys.stderr,
-    )
-
     cfg = _resolve_install_config(
         stealth=stealth, flags=flags, chromedriver=chromedriver
     )
+    print(
+        "Warning: Smart App Control / WDAC may block the unsigned Chrome wrapper"
+        + (
+            " or patched chromedriver (WinError 4551)"
+            if cfg.get("chromedriver_patch", False)
+            else ""
+        )
+        + ".",
+        file=sys.stderr,
+    )
+    print()
+
     injector.remove()
 
     if cfg.get("js_injection", True):
         try:
-            ext_id = injector.register_windows_webstore_extension()
+            injector.register_windows_webstore_extension()
         except (OSError, RuntimeError) as exc:
             print(
                 "Failed to install stealth extension on Windows. "
@@ -1630,11 +1629,6 @@ def install_windows(
             )
             print(exc, file=sys.stderr)
             sys.exit(1)
-        print(
-            f"Stealth: force-install {ext_id} from the Chrome Web Store "
-            f"({injector.WEBSTORE_EXTENSION_URL}). "
-            f"Non-enterprise Chrome blocks local/http update URLs."
-        )
 
     already_patched = os.path.isfile(real_exe)
     random_profile = bool(cfg.get("chrome_flags", False))
@@ -1660,17 +1654,12 @@ def install_windows(
                 print("Rolling back...", file=sys.stderr)
                 os.rename(real_exe, chrome_path)
             sys.exit(1)
-        if cfg.get("js_injection", True):
-            if warm_windows_profile_template(real_exe):
-                print(
-                    f"Stealth: warmed profile template at {windows_profile_template_dir()}"
-                )
-            else:
-                print(
-                    "Warning: could not warm Chrome profile template; "
-                    "extension may install on first launch instead.",
-                    file=sys.stderr,
-                )
+        if cfg.get("js_injection", True) and not warm_windows_profile_template(real_exe):
+            print(
+                "Warning: could not warm Chrome profile template; "
+                "extension may install on first launch instead.",
+                file=sys.stderr,
+            )
     elif already_patched:
         try:
             os.remove(chrome_path)
@@ -1684,7 +1673,7 @@ def install_windows(
 
     _apply_chromedriver_patch(cfg)
 
-    print("Updated." if already_patched else "Installed.")
+    print()
     _print_active_features(cfg)
 
 

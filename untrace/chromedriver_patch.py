@@ -1,10 +1,17 @@
 from __future__ import annotations
 
 import os
-import pwd
+import platform
 import re
 import shutil
 from pathlib import Path
+
+IS_WINDOWS = platform.system() == "Windows"
+
+if not IS_WINDOWS:
+    import pwd
+else:
+    pwd = None  # type: ignore[assignment]
 
 PATCH_MARKER = b"untrace chromedriver"
 CDC_INJECTION_RE = re.compile(rb"\{window\.cdc.*?;\}")
@@ -31,7 +38,7 @@ def _home_dirs_to_search() -> list[Path]:
 
     add(Path.home())
     sudo_user = os.environ.get("SUDO_USER")
-    if sudo_user:
+    if sudo_user and pwd is not None:
         try:
             add(Path(pwd.getpwnam(sudo_user).pw_dir))
         except KeyError:
@@ -50,18 +57,20 @@ def backup_path(binary: Path) -> Path:
 
 
 def find_chromedriver_binaries() -> list[Path]:
+    names = ("chromedriver.exe", "chromedriver") if IS_WINDOWS else ("chromedriver",)
+    search_roots: list[Path] = list(_selenium_cache_roots())
+    if not IS_WINDOWS:
+        search_roots.extend((Path("/usr/local/bin"), Path("/usr/bin")))
+
     candidates: list[Path] = []
-    for base in (
-        *_selenium_cache_roots(),
-        Path("/usr/local/bin"),
-        Path("/usr/bin"),
-    ):
+    for base in search_roots:
         if not base.is_dir():
             continue
-        if base.name == "chromedriver" and base.is_file():
+        if base.name in names and base.is_file():
             candidates.append(base)
             continue
-        candidates.extend(p for p in base.rglob("chromedriver") if p.is_file())
+        for name in names:
+            candidates.extend(p for p in base.rglob(name) if p.is_file())
 
     seen: set[Path] = set()
     unique: list[Path] = []

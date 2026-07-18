@@ -73,13 +73,17 @@ def test_resolve_install_features(stealth, flags, chromedriver, expected):
 def test_chrome_launch_flags_respect_config(monkeypatch, tmp_path):
     injector.use_untrace_root(tmp_path / "untrace")
     monkeypatch.setattr(injector, "is_installed", lambda: True)
+    monkeypatch.setattr(
+        injector, "extension_launch_flags", lambda: ["--load-extension=/tmp/ext"]
+    )
     try:
         config.save({"js_injection": False, "chrome_flags": True})
         flags = chrome_launch_flags()
         assert all(CHROME_FLAGS[name] in flags for name in DEFAULT_CHROME_FLAGS)
+        assert "--load-extension=/tmp/ext" not in flags
 
         config.save({"js_injection": True, "chrome_flags": False})
-        assert chrome_launch_flags() == []
+        assert chrome_launch_flags() == ["--load-extension=/tmp/ext"]
     finally:
         injector.clear_untrace_root_override()
 

@@ -1,10 +1,13 @@
 import json
 import os
+import sys
 
 import pytest
 
 from untrace import injector
 from untrace.__main__ import CHROME_SCRIPTS, DEFAULT_CHROME_SCRIPTS
+
+_linux_only = pytest.mark.skipif(sys.platform == "win32", reason="Linux-only")
 
 
 @pytest.fixture
@@ -22,6 +25,7 @@ def temp_untrace(monkeypatch, tmp_path):
     return root, ext_dir, script_path
 
 
+@_linux_only
 def test_setup_creates_extension(temp_untrace):
     root, ext_dir, script_path = temp_untrace
     scripts = list(DEFAULT_CHROME_SCRIPTS)
@@ -36,6 +40,7 @@ def test_setup_creates_extension(temp_untrace):
     assert injector.is_installed()
 
 
+@_linux_only
 def test_manifest_runs_at_document_start(temp_untrace):
     _, ext_dir, _ = temp_untrace
     injector.setup(list(DEFAULT_CHROME_SCRIPTS), CHROME_SCRIPTS)
@@ -59,6 +64,7 @@ def test_extension_version_is_valid_for_chrome():
         assert 0 <= int(part) <= 65536
 
 
+@_linux_only
 def test_pack_extension_crx_adds_no_sandbox_when_root(temp_untrace, monkeypatch):
     _, ext_dir, _ = temp_untrace
     injector.setup(list(DEFAULT_CHROME_SCRIPTS), CHROME_SCRIPTS)
@@ -78,6 +84,7 @@ def test_pack_extension_crx_adds_no_sandbox_when_root(temp_untrace, monkeypatch)
     assert f"--pack-extension={ext_dir}" in captured["cmd"]
 
 
+@_linux_only
 def test_remove_clears_extension(temp_untrace):
     _, ext_dir, script_path = temp_untrace
     injector.setup(list(DEFAULT_CHROME_SCRIPTS), CHROME_SCRIPTS)
@@ -127,6 +134,7 @@ def temp_registration(monkeypatch, tmp_path):
     }
 
 
+@_linux_only
 def test_setup_does_not_force_install_extension(temp_registration, monkeypatch):
     data = temp_registration
 
@@ -145,6 +153,7 @@ def test_setup_does_not_force_install_extension(temp_registration, monkeypatch):
     assert not injector.is_fully_registered()
 
 
+@_linux_only
 def test_register_system_extension(temp_registration, monkeypatch):
     data = temp_registration
     expected_id = data["expected_id"]
@@ -170,6 +179,7 @@ def test_register_system_extension(temp_registration, monkeypatch):
     assert injector.is_fully_registered()
 
 
+@_linux_only
 def test_unregister_clears_registration_files(temp_registration, monkeypatch):
     data = temp_registration
     expected_id = data["expected_id"]
@@ -191,6 +201,7 @@ def test_unregister_clears_registration_files(temp_registration, monkeypatch):
     assert not injector.is_fully_registered()
 
 
+@_linux_only
 def test_seed_extension_into_profile(temp_untrace):
     _, ext_dir, _ = temp_untrace
     injector.setup(list(DEFAULT_CHROME_SCRIPTS), CHROME_SCRIPTS)

@@ -296,31 +296,37 @@ def test_bot_fpscanner(chrome_driver):
 
 
 def test_untrace_extension(chrome_driver):
+    def _extensions_page(driver):
+        return driver.execute_script("""
+        const manager = document.querySelector('extensions-manager');
+        if (!manager || !manager.shadowRoot) return { items: [], text: '' };
+        const list = manager.shadowRoot.querySelector('extensions-item-list');
+        const items = [];
+        let text = manager.shadowRoot.textContent || '';
+        if (list && list.shadowRoot) {
+          text += '\\n' + (list.shadowRoot.textContent || '');
+          for (const item of list.shadowRoot.querySelectorAll('extensions-item')) {
+            if (!item.shadowRoot) continue;
+            const nameEl = item.shadowRoot.querySelector('#name');
+            const name = nameEl ? nameEl.textContent.trim() : '';
+            const body = item.shadowRoot.textContent || '';
+            items.push({ name, body, id: item.id || '' });
+            text += '\\n' + body;
+          }
+        }
+        return { items, text };
+        """)
+
     chrome_driver.get("chrome://extensions/")
     _wait(chrome_driver).until(
-        lambda d: d.execute_script("""
-        const manager = document.querySelector('extensions-manager');
-        return Boolean(manager && manager.shadowRoot);
-        """)
+        lambda d: any(
+            "untrace" in (item.get("name") or "").lower()
+            or "mgnlenokophofdnmlabkgpmlnolgomgj" in (item.get("id") or "")
+            for item in (_extensions_page(d).get("items") or [])
+        )
     )
 
-    page = chrome_driver.execute_script("""
-    const manager = document.querySelector('extensions-manager');
-    if (!manager || !manager.shadowRoot) return { items: [], text: '' };
-    const list = manager.shadowRoot.querySelector('extensions-item-list');
-    const items = [];
-    let text = manager.shadowRoot.textContent || '';
-    if (list && list.shadowRoot) {
-      for (const item of list.shadowRoot.querySelectorAll('extensions-item')) {
-        if (!item.shadowRoot) continue;
-        const name = item.shadowRoot.querySelector('#name')?.textContent?.trim() || '';
-        const body = item.shadowRoot.textContent || '';
-        items.push({ name, body });
-        text += '\\n' + body;
-      }
-    }
-    return { items, text };
-    """)
+    page = _extensions_page(chrome_driver)
     items = page.get("items") or []
     page_text = (page.get("text") or "").strip()
 

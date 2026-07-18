@@ -1,9 +1,15 @@
 import json
+import sys
+
+import pytest
 
 from untrace import injector
 from untrace.__main__ import deploy_linux
 
+_linux_only = pytest.mark.skipif(sys.platform == "win32", reason="Linux deploy paths")
 
+
+@_linux_only
 def test_deploy_writes_user_extension(monkeypatch, tmp_path):
     user_root = tmp_path / "user-untrace"
     monkeypatch.setattr(injector, "USER_UNTRACE_ROOT", user_root)
@@ -17,6 +23,7 @@ def test_deploy_writes_user_extension(monkeypatch, tmp_path):
     assert injector.get_untrace_root() == user_root
 
 
+@_linux_only
 def test_deploy_flags_only_removes_extension(monkeypatch, tmp_path):
     user_root = tmp_path / "user-untrace"
     monkeypatch.setattr(injector, "USER_UNTRACE_ROOT", user_root)
@@ -32,6 +39,7 @@ def test_deploy_flags_only_removes_extension(monkeypatch, tmp_path):
     assert saved["chrome_flags"] is True
 
 
+@_linux_only
 def test_user_deploy_roots_includes_sudo_user(monkeypatch, tmp_path):
     carlos_home = tmp_path / "carlos"
     root_home = tmp_path / "root"
@@ -50,6 +58,7 @@ def test_user_deploy_roots_includes_sudo_user(monkeypatch, tmp_path):
     assert root_home / ".local" / "share" / "untrace" in roots
 
 
+@_linux_only
 def test_remove_user_deploys_deletes_sudo_user_tree(monkeypatch, tmp_path):
     carlos_home = tmp_path / "carlos"
     root_home = tmp_path / "root"

@@ -1,3 +1,7 @@
+import sys
+
+import pytest
+
 from untrace import chromedriver_patch
 
 
@@ -43,6 +47,7 @@ def test_unpatch_chromedriver_binary_restores_backup(tmp_path):
     assert not chromedriver_patch.backup_path(driver).exists()
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Linux SUDO_USER home lookup")
 def test_unpatch_all_chromedrivers_uses_sudo_user_home(tmp_path, monkeypatch):
     real_user_home = tmp_path / "carlos"
     root_home = tmp_path / "root"

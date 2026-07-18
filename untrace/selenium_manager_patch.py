@@ -1,10 +1,17 @@
 from __future__ import annotations
 
 import os
-import pwd
+import platform
 import shutil
 import sysconfig
 from pathlib import Path
+
+IS_WINDOWS = platform.system() == "Windows"
+
+if not IS_WINDOWS:
+    import pwd
+else:
+    pwd = None  # type: ignore[assignment]
 
 PATCH_MARKER = "untrace selenium-manager"
 BACKUP_SUFFIX = ".untrace.bak"
@@ -43,7 +50,7 @@ def _home_dirs_to_search() -> list[Path]:
 
     add(Path.home())
     sudo_user = os.environ.get("SUDO_USER")
-    if sudo_user:
+    if sudo_user and pwd is not None:
         try:
             add(Path(pwd.getpwnam(sudo_user).pw_dir))
         except KeyError:
@@ -54,6 +61,7 @@ def _home_dirs_to_search() -> list[Path]:
 def _selenium_manager_candidates() -> list[Path]:
     candidates: list[Path] = []
     exe = sysconfig.get_config_var("EXE") or ""
+    platform_dir = "windows" if IS_WINDOWS else "linux"
 
     for home in _home_dirs_to_search():
         for site_packages in (
@@ -72,7 +80,7 @@ def _selenium_manager_candidates() -> list[Path]:
         import selenium.webdriver.common.selenium_manager as sm
 
         candidates.append(
-            Path(sm.__file__).parent.parent / "linux" / f"selenium-manager{exe}"
+            Path(sm.__file__).parent.parent / platform_dir / f"selenium-manager{exe}"
         )
     except ImportError:
         pass
@@ -135,6 +143,8 @@ def unpatch_selenium_manager(binary: Path | str) -> bool:
 
 
 def patch_all_selenium_managers() -> list[Path]:
+    if IS_WINDOWS:
+        return []
     patched: list[Path] = []
     for binary in _selenium_manager_candidates():
         try:
@@ -146,6 +156,8 @@ def patch_all_selenium_managers() -> list[Path]:
 
 
 def unpatch_all_selenium_managers() -> list[Path]:
+    if IS_WINDOWS:
+        return []
     unpatched: list[Path] = []
     for binary in _selenium_manager_candidates():
         if not is_patched(binary):

@@ -4,7 +4,6 @@ import glob
 import json
 import os
 import platform
-import pwd
 import random
 import re
 import shutil
@@ -12,11 +11,17 @@ import string
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 from untrace import chromedriver_patch, config, injector, selenium_manager_patch
 
 IS_WINDOWS = platform.system() == "Windows"
+
+if not IS_WINDOWS:
+    import pwd
+else:
+    pwd = None  # type: ignore[assignment]
 
 CHROMEDRIVER_STRIP_FLAGS: tuple[str, ...] = (
     "--enable-automation",
@@ -137,6 +142,8 @@ def chrome_launch_flags() -> list[str]:
 
 
 def _chown_to_sudo_user(path: Path) -> None:
+    if IS_WINDOWS or pwd is None:
+        return
     sudo_user = os.environ.get("SUDO_USER")
     if not sudo_user or os.geteuid() != 0 or not path.exists():
         return
@@ -533,6 +540,11 @@ def _managed_untrace_roots() -> list[Path]:
 
 
 def _effective_stealth_active() -> bool:
+    if IS_WINDOWS:
+        cfg = config.load()
+        if not cfg.get("js_injection", True):
+            return False
+        return injector.is_windows_webstore_extension_registered()
     for root in _managed_untrace_roots():
         manifest = root / "extension" / "manifest.json"
         if not manifest.is_file():
@@ -562,6 +574,11 @@ def _sync_config_to_managed_roots(cfg: dict) -> None:
 
 
 def _chrome_wrapper_installed() -> bool:
+    if IS_WINDOWS:
+        chrome = find_chrome_windows()
+        if not chrome:
+            return False
+        return os.path.isfile(os.path.join(os.path.dirname(chrome), REAL_EXE_NAME))
     if is_chrome_wrapped_linux():
         return True
     return any((root / "chrome").is_file() for root in injector.user_deploy_roots())
@@ -582,6 +599,12 @@ def _selenium_manager_patch_active() -> bool:
 
 
 def _apply_chromedriver_patch(cfg: dict) -> None:
+    if IS_WINDOWS:
+        unpatched = chromedriver_patch.unpatch_all_chromedrivers()
+        if unpatched:
+            print(f"Unpatched {len(unpatched)} chromedriver binary(s).")
+        return
+
     if cfg.get("chromedriver_patch", True):
         patched = chromedriver_patch.patch_all_chromedrivers()
         if patched:
@@ -616,13 +639,22 @@ def _print_active_features(cfg: dict | None = None) -> None:
     wrapper_enabled = (
         bool(cfg.get("chrome_wrapper", True)) and _chrome_wrapper_installed()
     )
-    chromedriver_enabled = _chromedriver_patch_active()
-    selenium_manager_enabled = _selenium_manager_patch_active()
-    print(f"{'✓' if _effective_stealth_active() else '✗'} Stealth")
-    print(f"{'✓' if flags_enabled else '✗'} Flags")
-    print(f"{'✓' if wrapper_enabled else '✗'} Chrome wrapper")
-    print(f"{'✓' if chromedriver_enabled else '✗'} Chromedriver patch")
-    print(f"{'✓' if selenium_manager_enabled else '✗'} Selenium-manager patch")
+    if IS_WINDOWS:
+        chromedriver_enabled = False
+        selenium_manager_enabled = False
+    else:
+        chromedriver_enabled = _chromedriver_patch_active()
+        selenium_manager_enabled = _selenium_manager_patch_active()
+    ok, bad = ("OK", "NO") if IS_WINDOWS else ("✓", "✗")
+    print(f"{ok if _effective_stealth_active() else bad} Stealth")
+    print(f"{ok if flags_enabled else bad} Flags")
+    print(f"{ok if wrapper_enabled else bad} Chrome wrapper")
+    if IS_WINDOWS:
+        print(f"{bad} Chromedriver patch (disabled on Windows)")
+        print(f"{bad} Selenium-manager patch (disabled on Windows)")
+    else:
+        print(f"{ok if chromedriver_enabled else bad} Chromedriver patch")
+        print(f"{ok if selenium_manager_enabled else bad} Selenium-manager patch")
 
 
 def _installed_wrapper_stale() -> list[str]:
@@ -878,36 +910,567 @@ def uninstall_linux():
 REAL_EXE_NAME = "chrome_real.exe"
 
 CSHARP_TEMPLATE = r"""using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
-using System.Linq;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Threading;
 
 class ChromeWrapper
 {
-    static void Main(string[] args)
-    {
-        string realExe = "__REAL_EXE__";
-        string[] extraFlags = new string[] { __FLAGS__ };
+    static readonly string RealExe = "__REAL_EXE__";
+    static readonly string[] ExtraFlags = new string[] { __FLAGS__ };
+    static readonly string[] StripExact = new string[] { __STRIP_EXACT__ };
+    static readonly string[] StripPrefixes = new string[] { __STRIP_PREFIXES__ };
+    static readonly bool RandomProfile = __RANDOM_PROFILE__;
+    static readonly bool ServeStealth = __SERVE_STEALTH__;
+    static readonly string ExtId = "__EXT_ID__";
+    static readonly string TemplateDir = @"__TEMPLATE_DIR__";
+    const int WarmupMs = 15000;
 
-        // Generate random user data dir
+    // When chromedriver kills chrome.exe (this wrapper), also kill chrome_real + children.
+    static class KillOnCloseJob
+    {
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+        static extern IntPtr CreateJobObject(IntPtr lpJobAttributes, string lpName);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern bool SetInformationJobObject(
+            IntPtr hJob, int jobObjectInfoClass, IntPtr lpJobObjectInfo, uint cbJobObjectInfoLength);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+
+        const int JobObjectExtendedLimitInformation = 9;
+        const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000;
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct IO_COUNTERS
+        {
+            public ulong ReadOperationCount;
+            public ulong WriteOperationCount;
+            public ulong OtherOperationCount;
+            public ulong ReadTransferCount;
+            public ulong WriteTransferCount;
+            public ulong OtherTransferCount;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct JOBOBJECT_BASIC_LIMIT_INFORMATION
+        {
+            public long PerProcessUserTimeLimit;
+            public long PerJobUserTimeLimit;
+            public uint LimitFlags;
+            public UIntPtr MinimumWorkingSetSize;
+            public UIntPtr MaximumWorkingSetSize;
+            public uint ActiveProcessLimit;
+            public UIntPtr Affinity;
+            public uint PriorityClass;
+            public uint SchedulingClass;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct JOBOBJECT_EXTENDED_LIMIT_INFORMATION
+        {
+            public JOBOBJECT_BASIC_LIMIT_INFORMATION BasicLimitInformation;
+            public IO_COUNTERS IoInfo;
+            public UIntPtr ProcessMemoryLimit;
+            public UIntPtr JobMemoryLimit;
+            public UIntPtr PeakProcessMemoryUsed;
+            public UIntPtr PeakJobMemoryUsed;
+        }
+
+        static readonly IntPtr JobHandle = CreateAndConfigure();
+
+        static IntPtr CreateAndConfigure()
+        {
+            IntPtr job = CreateJobObject(IntPtr.Zero, null);
+            if (job == IntPtr.Zero)
+                return IntPtr.Zero;
+
+            var info = new JOBOBJECT_EXTENDED_LIMIT_INFORMATION();
+            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            int length = Marshal.SizeOf(typeof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION));
+            IntPtr infoPtr = Marshal.AllocHGlobal(length);
+            try
+            {
+                Marshal.StructureToPtr(info, infoPtr, false);
+                if (!SetInformationJobObject(
+                        job, JobObjectExtendedLimitInformation, infoPtr, (uint)length))
+                {
+                    return IntPtr.Zero;
+                }
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(infoPtr);
+            }
+            return job;
+        }
+
+        public static void Track(Process process)
+        {
+            if (JobHandle == IntPtr.Zero || process == null)
+                return;
+            try
+            {
+                AssignProcessToJobObject(JobHandle, process.Handle);
+            }
+            catch { }
+        }
+    }
+
+    static bool IsAutomation(string[] args)
+    {
+        for (int i = 0; i < args.Length; i++)
+        {
+            string arg = args[i];
+            if (arg.StartsWith("--remote-debugging-port")
+                || arg.StartsWith("--test-type=")
+                || arg == "--test-type"
+                || arg == "--enable-automation"
+                || arg.StartsWith("--disable-automatio"))
+                return true;
+        }
+        return false;
+    }
+
+    static bool ShouldStrip(string arg)
+    {
+        for (int i = 0; i < StripExact.Length; i++)
+            if (arg == StripExact[i]) return true;
+        for (int i = 0; i < StripPrefixes.Length; i++)
+            if (arg.StartsWith(StripPrefixes[i])) return true;
+        if (arg.StartsWith("--disable-blink-features=")) return true;
+        if (arg.StartsWith("--log-level=")) return true;
+        if (arg.StartsWith("--test-type=")) return true;
+        return false;
+    }
+
+    static bool TakesSeparateValue(string arg)
+    {
+        return arg == "--disable-blink-features"
+            || arg == "--test-type"
+            || arg == "--log-level";
+    }
+
+    static List<string> FilterArgs(string[] args)
+    {
+        var filtered = new List<string>();
+        for (int i = 0; i < args.Length; i++)
+        {
+            string arg = args[i];
+            if (ShouldStrip(arg)) continue;
+            if (TakesSeparateValue(arg))
+            {
+                if (i + 1 < args.Length) i++;
+                continue;
+            }
+            filtered.Add(arg);
+        }
+        return filtered;
+    }
+
+    static string QuoteArg(string arg)
+    {
+        if (arg.Length == 0) return "\"\"";
+        bool needQuotes = false;
+        for (int i = 0; i < arg.Length; i++)
+        {
+            char c = arg[i];
+            if (c == ' ' || c == '\t' || c == '"' || c == '\n' || c == '\v')
+            {
+                needQuotes = true;
+                break;
+            }
+        }
+        if (!needQuotes) return arg;
+
+        var sb = new StringBuilder();
+        sb.Append('"');
+        int backslashes = 0;
+        for (int i = 0; i < arg.Length; i++)
+        {
+            char c = arg[i];
+            if (c == '\\')
+            {
+                backslashes++;
+                continue;
+            }
+            if (c == '"')
+            {
+                sb.Append('\\', backslashes * 2 + 1);
+                sb.Append('"');
+                backslashes = 0;
+                continue;
+            }
+            if (backslashes > 0)
+            {
+                sb.Append('\\', backslashes);
+                backslashes = 0;
+            }
+            sb.Append(c);
+        }
+        if (backslashes > 0) sb.Append('\\', backslashes * 2);
+        sb.Append('"');
+        return sb.ToString();
+    }
+
+    static string FindUserDataDir(List<string> args)
+    {
+        for (int i = 0; i < args.Count; i++)
+        {
+            string arg = args[i];
+            if (arg.StartsWith("--user-data-dir="))
+                return arg.Substring("--user-data-dir=".Length).Trim('"');
+            if (arg == "--user-data-dir" && i + 1 < args.Count)
+                return args[i + 1].Trim('"');
+        }
+        return null;
+    }
+
+    static bool StealthExtensionReady(string userDataDir)
+    {
+        if (string.IsNullOrEmpty(userDataDir) || string.IsNullOrEmpty(ExtId))
+            return false;
+        string secure = Path.Combine(userDataDir, "Default", "Secure Preferences");
+        if (File.Exists(secure))
+        {
+            try
+            {
+                string text = File.ReadAllText(secure);
+                if (text.IndexOf(ExtId) >= 0)
+                    return true;
+            }
+            catch { }
+        }
+        return false;
+    }
+
+    static void KillProcessTree(Process proc)
+    {
+        if (proc == null)
+            return;
+        try
+        {
+            var kill = new ProcessStartInfo
+            {
+                FileName = "taskkill",
+                Arguments = "/F /T /PID " + proc.Id,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            Process killer = Process.Start(kill);
+            if (killer != null)
+                killer.WaitForExit(10000);
+        }
+        catch { }
+        try
+        {
+            if (!proc.HasExited)
+                proc.Kill();
+        }
+        catch { }
+    }
+
+    static bool ShouldSkipCopyName(string name)
+    {
+        if (string.Equals(name, "lockfile", StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (string.Equals(name, "DevToolsActivePort", StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (name.StartsWith("Singleton", StringComparison.OrdinalIgnoreCase))
+            return true;
+        return false;
+    }
+
+    static void CopyProfileTree(string src, string dst)
+    {
+        Directory.CreateDirectory(dst);
+        foreach (string dir in Directory.GetDirectories(src, "*", SearchOption.AllDirectories))
+        {
+            string rel = dir.Substring(src.Length).TrimStart('\\', '/');
+            Directory.CreateDirectory(Path.Combine(dst, rel));
+        }
+        foreach (string file in Directory.GetFiles(src, "*", SearchOption.AllDirectories))
+        {
+            string name = Path.GetFileName(file);
+            if (ShouldSkipCopyName(name))
+                continue;
+            string rel = file.Substring(src.Length).TrimStart('\\', '/');
+            string destFile = Path.Combine(dst, rel);
+            Directory.CreateDirectory(Path.GetDirectoryName(destFile));
+            File.Copy(file, destFile, true);
+        }
+        string lockPath = Path.Combine(dst, "lockfile");
+        if (File.Exists(lockPath))
+        {
+            try { File.Delete(lockPath); } catch { }
+        }
+    }
+
+    // Force-install writes Secure Preferences (location 7) + Extensions/<id>/<ver>_0.
+    static void WarmupStealthProfile(string userDataDir)
+    {
+        if (string.IsNullOrEmpty(userDataDir) || StealthExtensionReady(userDataDir))
+            return;
+
+        Directory.CreateDirectory(userDataDir);
+        var psi = new ProcessStartInfo
+        {
+            FileName = RealExe,
+            Arguments = string.Join(" ", new string[] {
+                QuoteArg("--user-data-dir=" + userDataDir),
+                "--no-first-run",
+                "--no-default-browser-check",
+                "--disable-sync",
+                "--disable-gpu",
+                QuoteArg("about:blank"),
+            }),
+            UseShellExecute = false,
+        };
+
+        Process warmup = null;
+        try
+        {
+            warmup = Process.Start(psi);
+            if (warmup == null)
+                return;
+            KillOnCloseJob.Track(warmup);
+            int waited = 0;
+            while (waited < WarmupMs)
+            {
+                if (StealthExtensionReady(userDataDir))
+                    break;
+                Thread.Sleep(200);
+                waited += 200;
+            }
+            if (waited < WarmupMs)
+                Thread.Sleep(Math.Min(5000, WarmupMs - waited));
+        }
+        catch { }
+        finally
+        {
+            KillProcessTree(warmup);
+            if (warmup != null)
+            {
+                try { warmup.WaitForExit(5000); } catch { }
+                try { warmup.Dispose(); } catch { }
+            }
+            // Chrome often detaches from the starter pid; clear all browser processes.
+            try
+            {
+                var killReal = new ProcessStartInfo
+                {
+                    FileName = "taskkill",
+                    Arguments = "/F /IM chrome_real.exe /T",
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                };
+                Process kr = Process.Start(killReal);
+                if (kr != null)
+                    kr.WaitForExit(15000);
+                var killChrome = new ProcessStartInfo
+                {
+                    FileName = "taskkill",
+                    Arguments = "/F /IM chrome.exe /T",
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                };
+                Process kc = Process.Start(killChrome);
+                if (kc != null)
+                    kc.WaitForExit(15000);
+            }
+            catch { }
+        }
+    }
+
+    static void EnsureTemplateProfile()
+    {
+        if (string.IsNullOrEmpty(TemplateDir) || StealthExtensionReady(TemplateDir))
+            return;
+
+        Mutex mutex = null;
+        bool owned = false;
+        try
+        {
+            mutex = new Mutex(false, "Local\\UntraceChromeProfileTemplate");
+            owned = mutex.WaitOne(WarmupMs + 30000);
+            if (StealthExtensionReady(TemplateDir))
+                return;
+            WarmupStealthProfile(TemplateDir);
+        }
+        catch { }
+        finally
+        {
+            if (owned && mutex != null)
+            {
+                try { mutex.ReleaseMutex(); } catch { }
+            }
+            if (mutex != null)
+            {
+                try { mutex.Dispose(); } catch { }
+            }
+        }
+    }
+
+    // Warm once into a template, then copy into each --user-data-dir (fast for automation).
+    static void EnsureWarmedProfile(string userDataDir, bool automation)
+    {
+        if (string.IsNullOrEmpty(userDataDir) || StealthExtensionReady(userDataDir))
+            return;
+
+        EnsureTemplateProfile();
+        if (StealthExtensionReady(TemplateDir))
+        {
+            try
+            {
+                CopyProfileTree(TemplateDir, userDataDir);
+                if (StealthExtensionReady(userDataDir))
+                    return;
+            }
+            catch { }
+        }
+        // In-place warmup delays DevTools — never do it under automation.
+        if (!automation)
+            WarmupStealthProfile(userDataDir);
+    }
+
+    static string NewRandomProfileDir()
+    {
         string tempBase = Path.Combine(Path.GetTempPath(), "chrome_random_profiles");
         Directory.CreateDirectory(tempBase);
-        string randomDir = Path.Combine(tempBase, "profile_" + Path.GetRandomFileName().Replace(".", ""));
+        string randomDir = Path.Combine(
+            tempBase, "profile_" + Path.GetRandomFileName().Replace(".", ""));
         Directory.CreateDirectory(randomDir);
+        return randomDir;
+    }
 
-        var allArgs = args.Concat(extraFlags)
-                          .Concat(new[] { "--user-data-dir=" + randomDir })
-                          .Select(a => "\"" + a.Replace("\"", "\\\"") + "\"");
+    static void RemoveUserDataDirArgs(List<string> args)
+    {
+        for (int i = args.Count - 1; i >= 0; i--)
+        {
+            string arg = args[i];
+            if (arg.StartsWith("--user-data-dir="))
+            {
+                args.RemoveAt(i);
+                continue;
+            }
+            if (arg == "--user-data-dir")
+            {
+                if (i + 1 < args.Count)
+                    args.RemoveAt(i + 1);
+                args.RemoveAt(i);
+            }
+        }
+    }
 
-        string argString = string.Join(" ", allArgs);
+    static void SetUserDataDir(List<string> args, string dir)
+    {
+        RemoveUserDataDirArgs(args);
+        args.Add("--user-data-dir=" + dir);
+    }
+
+    static bool IsUnderChromeRandomProfiles(string path)
+    {
+        if (string.IsNullOrEmpty(path))
+            return false;
+        string norm = path.Replace('/', '\\').ToLowerInvariant();
+        return norm.IndexOf("\\chrome_random_profiles\\") >= 0
+            || norm.EndsWith("\\chrome_random_profiles");
+    }
+
+    static bool CreateJunction(string linkPath, string targetPath)
+    {
+        try
+        {
+            if (Directory.Exists(linkPath))
+                Directory.Delete(linkPath, true);
+            else if (File.Exists(linkPath))
+                File.Delete(linkPath);
+
+            var psi = new ProcessStartInfo
+            {
+                FileName = "cmd.exe",
+                Arguments = "/c mklink /J "
+                    + QuoteArg(linkPath) + " " + QuoteArg(targetPath),
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            Process p = Process.Start(psi);
+            if (p == null)
+                return false;
+            p.WaitForExit(15000);
+            return p.ExitCode == 0 && Directory.Exists(linkPath);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    static void Main(string[] args)
+    {
+        bool automation = IsAutomation(args);
+        List<string> finalArgs = automation ? FilterArgs(args) : new List<string>(args);
+
+        string existingDir = FindUserDataDir(finalArgs);
+        string profileDir = null;
+
+        if (automation || RandomProfile)
+        {
+            if (IsUnderChromeRandomProfiles(existingDir))
+            {
+                profileDir = existingDir;
+            }
+            else
+            {
+                profileDir = NewRandomProfileDir();
+                if (automation && !string.IsNullOrEmpty(existingDir))
+                {
+                    // Chromedriver waits for DevToolsActivePort under its scoped_dir.
+                    // Keep that path as a junction into chrome_random_profiles.
+                    if (!CreateJunction(existingDir, profileDir))
+                        SetUserDataDir(finalArgs, profileDir);
+                }
+                else
+                {
+                    SetUserDataDir(finalArgs, profileDir);
+                }
+            }
+        }
+
+        for (int i = 0; i < ExtraFlags.Length; i++)
+            finalArgs.Add(ExtraFlags[i]);
+
+        string userDataDir = profileDir ?? FindUserDataDir(finalArgs);
+        if (ServeStealth && !string.IsNullOrEmpty(userDataDir))
+            EnsureWarmedProfile(userDataDir, automation);
+
+        var quoted = new string[finalArgs.Count];
+        for (int i = 0; i < finalArgs.Count; i++)
+            quoted[i] = QuoteArg(finalArgs[i]);
 
         var psi = new ProcessStartInfo
         {
-            FileName = realExe,
-            Arguments = argString,
+            FileName = RealExe,
+            Arguments = string.Join(" ", quoted),
             UseShellExecute = false,
         };
-        Process.Start(psi);
+
+        Process proc = Process.Start(psi);
+        if (proc == null)
+            Environment.Exit(1);
+
+        KillOnCloseJob.Track(proc);
+
+        if (automation || ServeStealth)
+        {
+            proc.WaitForExit();
+            KillProcessTree(proc);
+            Environment.Exit(proc.ExitCode);
+        }
     }
 }
 """
@@ -958,15 +1521,114 @@ def find_csc():
     return candidates[0] if candidates else None
 
 
-def build_wrapper_source(real_exe_path: str) -> str:
+def _csharp_string_array(values: list[str] | tuple[str, ...]) -> str:
+    if not values:
+        return ""
+    return ", ".join(
+        '"' + v.replace("\\", "\\\\").replace('"', '\\"') + '"' for v in values
+    )
+
+
+def build_wrapper_source(real_exe_path: str, *, random_profile: bool = False) -> str:
     real_exe_escaped = real_exe_path.replace("\\", "\\\\")
-    flags_literal = ", ".join(f'"{f}"' for f in chrome_launch_flags())
+    cfg = config.load()
+    cfg_flags = chrome_launch_flags()
+    # Chrome on Windows exits immediately under --remote-debugging-port without
+    # --enable-automation; keep it while still stripping other chromedriver junk.
+    strip_exact = [f for f in CHROMEDRIVER_STRIP_FLAGS if f != "--enable-automation"]
+    strip_prefixes = (
+        "--disable-blink-features=",
+        "--log-level=",
+        "--test-type=",
+    )
+    serve_stealth = bool(cfg.get("js_injection", True)) and IS_WINDOWS
+    template_dir = str(
+        injector.SYSTEM_UNTRACE_ROOT / "chrome_profile_template"
+    ).replace('"', '""')
+
     src = CSHARP_TEMPLATE.replace("__REAL_EXE__", real_exe_escaped)
-    src = src.replace("__FLAGS__", flags_literal)
+    src = src.replace("__FLAGS__", _csharp_string_array(cfg_flags))
+    src = src.replace("__STRIP_EXACT__", _csharp_string_array(strip_exact))
+    src = src.replace("__STRIP_PREFIXES__", _csharp_string_array(strip_prefixes))
+    src = src.replace("__RANDOM_PROFILE__", "true" if random_profile else "false")
+    src = src.replace("__SERVE_STEALTH__", "true" if serve_stealth else "false")
+    src = src.replace("__EXT_ID__", injector.WEBSTORE_EXTENSION_ID)
+    src = src.replace("__TEMPLATE_DIR__", template_dir)
     return src
 
 
-def compile_wrapper(real_exe_path: str, output_path: str) -> bool:
+def windows_profile_template_dir() -> Path:
+    return injector.SYSTEM_UNTRACE_ROOT / "chrome_profile_template"
+
+
+def windows_profile_template_ready() -> bool:
+    secure = windows_profile_template_dir() / "Default" / "Secure Preferences"
+    if not secure.is_file():
+        return False
+    try:
+        return injector.WEBSTORE_EXTENSION_ID in secure.read_text(
+            encoding="utf-8", errors="ignore"
+        )
+    except OSError:
+        return False
+
+
+def _kill_windows_chrome_processes() -> None:
+    for image in ("chrome_real.exe", "chrome.exe"):
+        subprocess.run(
+            ["taskkill", "/F", "/IM", image, "/T"],
+            capture_output=True,
+            check=False,
+        )
+
+
+def warm_windows_profile_template(real_exe: str) -> bool:
+    if windows_profile_template_ready():
+        return True
+    if not os.path.isfile(real_exe):
+        return False
+
+    template = windows_profile_template_dir()
+    template.mkdir(parents=True, exist_ok=True)
+    proc = subprocess.Popen(
+        [
+            real_exe,
+            f"--user-data-dir={template}",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-sync",
+            "--disable-gpu",
+            "about:blank",
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            if windows_profile_template_ready():
+                break
+            time.sleep(0.2)
+        else:
+            time.sleep(5)
+    finally:
+        subprocess.run(
+            ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+            capture_output=True,
+            check=False,
+        )
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+        # Chrome often reparents away from the Popen pid; wipe all browser procs.
+        _kill_windows_chrome_processes()
+    return windows_profile_template_ready()
+
+
+def compile_wrapper(
+    real_exe_path: str, output_path: str, *, random_profile: bool = False
+) -> bool:
     csc = find_csc()
     if not csc:
         print(
@@ -974,7 +1636,7 @@ def compile_wrapper(real_exe_path: str, output_path: str) -> bool:
         )
         return False
 
-    src = build_wrapper_source(real_exe_path)
+    src = build_wrapper_source(real_exe_path, random_profile=random_profile)
     tmp_dir = tempfile.mkdtemp(prefix="chrome_wrapper_")
     src_path = os.path.join(tmp_dir, "ChromeWrapper.cs")
 
@@ -1011,7 +1673,9 @@ def status_windows():
     _print_active_features()
 
 
-def install_windows(*, stealth: bool = False, flags: bool = False):
+def install_windows(
+    *, stealth: bool = False, flags: bool = False, chromedriver: bool = False
+):
     chrome_path = find_chrome_windows()
     if not chrome_path:
         print("Error: could not locate chrome.exe", file=sys.stderr)
@@ -1020,32 +1684,87 @@ def install_windows(*, stealth: bool = False, flags: bool = False):
     chrome_dir = os.path.dirname(chrome_path)
     real_exe = os.path.join(chrome_dir, REAL_EXE_NAME)
 
-    cfg = _resolve_install_config(stealth=stealth, flags=flags)
+    if chromedriver:
+        print(
+            "Warning: --chromedriver is disabled on Windows; ignoring.",
+            file=sys.stderr,
+        )
+
+    print(
+        "Warning: if Smart App Control (or WDAC) is on, Windows may block the "
+        "unsigned Chrome wrapper and Selenium/Chrome may fail to launch.",
+        file=sys.stderr,
+    )
+
+    cfg = _resolve_install_config(stealth=stealth, flags=flags, chromedriver=False)
+    cfg["chromedriver_patch"] = False
+    config.save(cfg)
+    injector.remove()
 
     if cfg.get("js_injection", True):
-        scripts = list(DEFAULT_CHROME_SCRIPTS)
-        injector.setup(scripts, CHROME_SCRIPTS)
-    else:
-        injector.remove()
+        try:
+            ext_id = injector.register_windows_webstore_extension()
+        except (OSError, RuntimeError) as exc:
+            print(
+                "Failed to install stealth extension on Windows. "
+                "Run as Administrator and check network access to the Chrome Web Store.",
+                file=sys.stderr,
+            )
+            print(exc, file=sys.stderr)
+            sys.exit(1)
+        print(
+            f"Stealth: force-install {ext_id} from the Chrome Web Store "
+            f"({injector.WEBSTORE_EXTENSION_URL}). "
+            f"Non-enterprise Chrome blocks local/http update URLs."
+        )
 
     already_patched = os.path.isfile(real_exe)
+    random_profile = bool(cfg.get("chrome_flags", False))
+    want_wrapper = bool(
+        cfg.get("chrome_wrapper", True)
+        or cfg.get("chrome_flags", False)
+        or cfg.get("js_injection", False)
+    )
 
-    if not already_patched:
+    if want_wrapper:
+        if not already_patched:
+            try:
+                os.rename(chrome_path, real_exe)
+            except PermissionError:
+                print(
+                    "Permission denied. Run as Administrator and close Chrome first.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+        if not compile_wrapper(real_exe, chrome_path, random_profile=random_profile):
+            print("Error: compilation failed.", file=sys.stderr)
+            if not already_patched:
+                print("Rolling back...", file=sys.stderr)
+                os.rename(real_exe, chrome_path)
+            sys.exit(1)
+        if cfg.get("js_injection", True):
+            if warm_windows_profile_template(real_exe):
+                print(
+                    f"Stealth: warmed profile template at {windows_profile_template_dir()}"
+                )
+            else:
+                print(
+                    "Warning: could not warm Chrome profile template; "
+                    "extension may install on first launch instead.",
+                    file=sys.stderr,
+                )
+    elif already_patched:
         try:
-            os.rename(chrome_path, real_exe)
+            os.remove(chrome_path)
+            os.rename(real_exe, chrome_path)
         except PermissionError:
             print(
                 "Permission denied. Run as Administrator and close Chrome first.",
                 file=sys.stderr,
             )
             sys.exit(1)
-    if not compile_wrapper(real_exe, chrome_path):
-        print("Error: compilation failed.", file=sys.stderr)
-        if not already_patched:
-            print("Rolling back...", file=sys.stderr)
-            os.rename(real_exe, chrome_path)
-            injector.remove()
-        sys.exit(1)
+
+    _apply_chromedriver_patch(cfg)
 
     print("Updated." if already_patched else "Installed.")
     _print_active_features(cfg)
@@ -1060,23 +1779,26 @@ def uninstall_windows():
     chrome_dir = os.path.dirname(chrome_path)
     real_exe = os.path.join(chrome_dir, REAL_EXE_NAME)
 
-    if not os.path.isfile(real_exe):
-        print("No backup found.", file=sys.stderr)
-        sys.exit(1)
+    if os.path.isfile(real_exe):
+        try:
+            os.remove(chrome_path)
+            os.rename(real_exe, chrome_path)
+        except PermissionError:
+            print(
+                "Permission denied. Run as Administrator and close Chrome first.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
 
-    try:
-        os.remove(chrome_path)
-        os.rename(real_exe, chrome_path)
-    except PermissionError:
-        print(
-            "Permission denied. Run as Administrator and close Chrome first.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    print("Uninstalled.")
     injector.remove()
+    template = windows_profile_template_dir()
+    if template.is_dir():
+        shutil.rmtree(template, ignore_errors=True)
     config.clear()
+    unpatched_drivers = chromedriver_patch.unpatch_all_chromedrivers()
+    if unpatched_drivers:
+        print(f"Unpatched {len(unpatched_drivers)} chromedriver(s).")
+    print("Uninstalled.")
 
 
 def install(*, stealth: bool = False, flags: bool = False, chromedriver: bool = False):
@@ -1120,7 +1842,10 @@ def main():
     toggles.add_argument(
         "--stealth",
         action="store_true",
-        help="enable extension / JS injection only",
+        help=(
+            "enable extension / JS injection "
+            "(Linux: local MV3; Windows: Chrome Web Store force-install)"
+        ),
     )
     toggles.add_argument(
         "--flags",
@@ -1130,7 +1855,7 @@ def main():
     toggles.add_argument(
         "--chromedriver",
         action="store_true",
-        help="patch chromedriver binaries (neutralize CDC injection)",
+        help="patch chromedriver binaries (neutralize CDC injection; Linux only)",
     )
 
     args = parser.parse_args()

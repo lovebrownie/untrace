@@ -25,7 +25,7 @@ def load() -> dict:
 
     try:
         data = json.loads(path.read_text())
-    except json.JSONDecodeError, OSError:
+    except (json.JSONDecodeError, OSError):
         return dict(DEFAULT_CONFIG)
 
     config = dict(DEFAULT_CONFIG)

@@ -553,7 +553,7 @@ def _effective_stealth_active() -> bool:
         if cfg_path.is_file():
             try:
                 data = json.loads(cfg_path.read_text())
-            except json.JSONDecodeError, OSError:
+            except (json.JSONDecodeError, OSError):
                 data = {}
             if not data.get("js_injection", True):
                 continue
@@ -631,10 +631,10 @@ def _disable_stealth_at_roots(cfg: dict, roots: list[Path]) -> None:
 def _print_active_features(cfg: dict | None = None) -> None:
     if cfg is None:
         cfg = config.load()
-    flags_enabled = bool(cfg.get("chrome_flags", True))
     wrapper_enabled = (
         bool(cfg.get("chrome_wrapper", True)) and _chrome_wrapper_installed()
     )
+    flags_enabled = bool(cfg.get("chrome_flags", True)) and wrapper_enabled
     chromedriver_enabled = _chromedriver_patch_active()
     ok, bad = "OK", "OFF"
     print(f"{ok if _effective_stealth_active() else bad} Stealth")
@@ -644,6 +644,29 @@ def _print_active_features(cfg: dict | None = None) -> None:
     if not IS_WINDOWS:
         selenium_manager_enabled = _selenium_manager_patch_active()
         print(f"{ok if selenium_manager_enabled else bad} Selenium-manager patch")
+
+
+def windows_gui_status() -> dict:
+    cfg = config.load()
+    chrome = find_chrome_windows()
+    wrapper_on = bool(cfg.get("chrome_wrapper", True)) and _chrome_wrapper_installed()
+    flags_on = bool(cfg.get("chrome_flags", True)) and wrapper_on
+    stealth_on = _effective_stealth_active()
+    chromedriver_on = _chromedriver_patch_active()
+    features = [
+        {"id": "stealth", "label": "Anti-detection", "on": stealth_on},
+        {"id": "flags", "label": "Clean profiles", "on": flags_on},
+        {"id": "wrapper", "label": "Browser", "on": wrapper_on},
+        {"id": "chromedriver", "label": "Automation", "on": chromedriver_on},
+    ]
+    any_on = any(f["on"] for f in features)
+    return {
+        "chrome_found": bool(chrome),
+        "installed": wrapper_on or any_on,
+        "features": features,
+        "can_install": bool(chrome),
+        "can_uninstall": wrapper_on or any_on,
+    }
 
 
 def _installed_wrapper_stale() -> list[str]:
@@ -1401,6 +1424,27 @@ def is_admin_windows() -> bool:
         return False
 
 
+def ensure_admin_windows() -> None:
+    if not IS_WINDOWS or is_admin_windows():
+        return
+    import ctypes
+
+    if getattr(sys, "frozen", False):
+        path = sys.executable
+        params = subprocess.list2cmdline(sys.argv[1:])
+        workdir = str(Path(sys.executable).resolve().parent)
+    else:
+        path = sys.executable
+        params = subprocess.list2cmdline(["-m", "untrace", *sys.argv[1:]])
+        workdir = str(Path(__file__).resolve().parent.parent)
+    rc = int(
+        ctypes.windll.shell32.ShellExecuteW(None, "runas", path, params, workdir, 1)
+    )
+    if rc <= 32:
+        raise SystemExit("Administrator approval is required.")
+    raise SystemExit(0)
+
+
 def find_chrome_windows():
     try:
         import winreg
@@ -1596,6 +1640,8 @@ def install_windows(
         print("Error: could not locate chrome.exe", file=sys.stderr)
         sys.exit(1)
 
+    _kill_windows_chrome_processes()
+
     chrome_dir = os.path.dirname(chrome_path)
     real_exe = os.path.join(chrome_dir, REAL_EXE_NAME)
 
@@ -1683,6 +1729,8 @@ def uninstall_windows():
         print("Error: could not locate chrome.exe", file=sys.stderr)
         sys.exit(1)
 
+    _kill_windows_chrome_processes()
+
     chrome_dir = os.path.dirname(chrome_path)
     real_exe = os.path.join(chrome_dir, REAL_EXE_NAME)
 
@@ -1735,6 +1783,11 @@ def main():
     group.add_argument("--install", action="store_true")
     group.add_argument("--uninstall", action="store_true")
     group.add_argument("--status", action="store_true")
+    group.add_argument(
+        "--gui",
+        action="store_true",
+        help="open the Windows install/uninstall GUI",
+    )
     toggles = parser.add_argument_group("features (used with --install)")
     toggles.add_argument(
         "--stealth",
@@ -1756,6 +1809,10 @@ def main():
     )
 
     args = parser.parse_args()
+    from untrace import applog
+
+    cmd = " ".join(sys.argv[1:]) or "(no args)"
+    applog.enable(command=cmd)
 
     if args.install:
         install(
@@ -1767,6 +1824,13 @@ def main():
         uninstall()
     elif args.status:
         status()
+    elif args.gui:
+        if not IS_WINDOWS:
+            print("Error: --gui is Windows-only.", file=sys.stderr)
+            sys.exit(1)
+        from untrace.gui_windows import main as gui_main
+
+        gui_main()
 
 
 if __name__ == "__main__":

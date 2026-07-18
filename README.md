@@ -47,15 +47,23 @@ sudo python3 -m untrace --uninstall
 
 ### Windows
 
-Run an elevated PowerShell / terminal (Admin), close Chrome first:
+Close Chrome first. CLI (Admin) or GUI:
 
 ```powershell
 python -m untrace --install --stealth --flags --chromedriver
 python -m untrace --status
 python -m untrace --uninstall
+
+python -m untrace --gui
 ```
 
-`--stealth` force-installs [Untrace Injector](https://chromewebstore.google.com/detail/untrace-injector/mgnlenokophofdnmlabkgpmlnolgomgj) from the Chrome Web Store (Admin for policy keys) and warms `%PROGRAMDATA%\Untrace\chrome_profile_template`. `--chromedriver` patches cached drivers (keep App Control off if the unsigned PE is blocked).
+Build a standalone `dist\Untrace.exe` (optional):
+
+```powershell
+task build-gui
+```
+
+`--deploy` is not supported on Windows yet. `--stealth` force-installs [Untrace Injector](https://chromewebstore.google.com/detail/untrace-injector/mgnlenokophofdnmlabkgpmlnolgomgj) from the Chrome Web Store (Admin for policy keys) and warms `%PROGRAMDATA%\Untrace\chrome_profile_template`. `--chromedriver` patches cached drivers (keep App Control off if the unsigned PE is blocked).
 
 ## Windows
 

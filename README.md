@@ -9,24 +9,18 @@ Four optional layers, toggled independently:
 | **Stealth** | `--stealth` | MV3 extension — injects scripts at `document_start` in the `MAIN` world on every frame. **Linux:** local pack/seed. **Windows:** [Chrome Web Store force-install](https://chromewebstore.google.com/detail/untrace-injector/mgnlenokophofdnmlabkgpmlnolgomgj) |
 | **Chrome wrapper** | `--flags` | Replaces Chrome with a wrapper in front of `chrome_real` (bash on Linux, C# on Windows). Strips chromedriver junk flags, applies launcher flags, seeds the extension into profiles (**Linux**). **Windows:** random profiles under `%TEMP%\chrome_random_profiles` for manual and Selenium |
 | **Chromedriver patch** | `--chromedriver` | Neutralizes the CDC (`window.cdc_*`) injection in cached chromedriver binaries (and blanks `test-type=webdriver`). **Linux** also blanks `enable-automation` in the driver. **Windows** leaves `enable-automation` intact (Chrome needs it under remote debugging). Patched PE is unsigned — WDAC/SAC may block it (`WinError 4551`) |
-| **Selenium-manager patch** | `--chromedriver` (with deploy/install) | Points Selenium's `selenium-manager` at the user Chrome wrapper so `webdriver.Chrome()` uses untrace automatically (**Linux only**) |
+| **Selenium-manager patch** | `--chromedriver` (with install) | Points Selenium's `selenium-manager` at the user Chrome wrapper so `webdriver.Chrome()` uses untrace automatically (**Linux only**) |
 
-Bare `--install` or `--deploy` (no flags) enables all three feature flags (`--stealth`, `--flags`, `--chromedriver`). On Windows, selenium-manager patching is skipped; stealth uses the Web Store extension (not the Linux local pack).
+Bare `--install` (no flags) enables all three feature flags (`--stealth`, `--flags`, `--chromedriver`). On Windows, selenium-manager patching is skipped; stealth uses the Web Store extension (not the Linux local pack).
 
 ## Quick start
 
 ### Linux
 
-**Full system install** (needs root):
+**Install** (needs root). Re-run the same command to update:
 
 ```bash
 sudo python3 -m untrace --install --stealth --flags --chromedriver
-```
-
-**Day-to-day updates** (no password):
-
-```bash
-python3 -m untrace --deploy --stealth --flags --chromedriver
 ```
 
 **Status** (shows what is actually active):
@@ -37,12 +31,12 @@ python3 -m untrace --status
 
 ```
 Patched
-Active untrace root: /home/you/.local/share/untrace
-✓ Stealth
-✓ Flags
-✓ Chrome wrapper
-✓ Chromedriver patch
-✓ Selenium-manager patch
+Active untrace root: /etc/untrace
+OK Stealth
+OK Flags
+OK Chrome wrapper
+OK Chromedriver patch
+OK Selenium-manager patch
 ```
 
 **Uninstall** — removes everything: restores system Chrome, deletes `/etc/untrace` and `~/.local/share/untrace` (via `SUDO_USER`), unpatches chromedrivers:
@@ -61,7 +55,7 @@ python -m untrace --status
 python -m untrace --uninstall
 ```
 
-`--deploy` is not supported on Windows yet. `--stealth` force-installs [Untrace Injector](https://chromewebstore.google.com/detail/untrace-injector/mgnlenokophofdnmlabkgpmlnolgomgj) from the Chrome Web Store (Admin for policy keys) and warms `%PROGRAMDATA%\Untrace\chrome_profile_template`. `--chromedriver` patches cached drivers (keep App Control off if the unsigned PE is blocked).
+`--stealth` force-installs [Untrace Injector](https://chromewebstore.google.com/detail/untrace-injector/mgnlenokophofdnmlabkgpmlnolgomgj) from the Chrome Web Store (Admin for policy keys) and warms `%PROGRAMDATA%\Untrace\chrome_profile_template`. `--chromedriver` patches cached drivers (keep App Control off if the unsigned PE is blocked).
 
 ## Windows
 
@@ -100,19 +94,9 @@ Each flag only enables its own layer. Combine as needed:
 
 Passing a flag off on reinstall disables that layer (e.g. `--install --stealth` unpatches chromedrivers and removes the Chrome wrapper if it was there).
 
-## Install vs deploy
+## Install
 
-| | `--install` | `--deploy` |
-|---|-------------|------------|
-| Root required | Yes | No |
-| System Chrome wrapper | `/opt/google/chrome/chrome` | — |
-| User Chrome wrapper | updates `~/.local/share/untrace/chrome` if it exists | `~/.local/share/untrace/chrome` |
-| Extension root | `/etc/untrace` | `~/.local/share/untrace` |
-| When to use | Once per machine, or to change system Chrome | After editing scripts, routine iteration |
-
-The system wrapper prefers `~/.local/share/untrace` when it exists (from `--deploy`), so deploy updates land without re-running sudo.
-
-Commands run under `sudo` resolve the real user's home via `SUDO_USER` — not `/root`.
+`--install` (root on Linux, Admin on Windows) writes the system Chrome wrapper, extension root (`/etc/untrace` or `%PROGRAMDATA%\Untrace`), and on Linux also `~/.local/share/untrace/chrome` for Selenium-manager. Commands run under `sudo` resolve the real user's home via `SUDO_USER` — not `/root`.
 
 ## Selenium
 
@@ -133,7 +117,7 @@ When the wrapper is active it strips chromedriver junk (`--disable-blink-feature
 pytest tests/test_chromedriver.py
 ```
 
-Requires a prior install: Linux `python -m untrace --deploy --stealth --flags --chromedriver` (or `--install`); Windows `python -m untrace --install --stealth --flags --chromedriver`. `chrome_driver` in `tests/conftest.py` is intentionally minimal — fix failures in untrace, not the fixture. Linux-only unit tests are skipped on Windows.
+Requires a prior `python -m untrace --install --stealth --flags --chromedriver` (sudo/Admin as needed). `chrome_driver` in `tests/conftest.py` is intentionally minimal — fix failures in untrace, not the fixture. Linux-only unit tests are skipped on Windows.
 
 | Test | Target |
 |------|--------|
@@ -145,10 +129,9 @@ Requires a prior install: Linux `python -m untrace --deploy --stealth --flags --
 
 ## Custom scripts
 
-Edit `custom.js` in the active untrace root, then re-run install or deploy:
+Edit `custom.js` in the active untrace root, then re-run `--install`:
 
-- Linux system: `/etc/untrace/custom.js`
-- Linux user deploy: `~/.local/share/untrace/custom.js`
+- Linux: `/etc/untrace/custom.js`
 - Windows: `%ProgramData%\Untrace\custom.js`
 
 Default stealth scripts live in `untrace/js/`. Enable or disable via `DEFAULT_CHROME_SCRIPTS` / `OPTIONAL_CHROME_SCRIPTS` in `untrace/__main__.py`.

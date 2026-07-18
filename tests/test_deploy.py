@@ -1,42 +1,10 @@
-import json
 import sys
 
 import pytest
 
 from untrace import injector
-from untrace.__main__ import deploy_linux
 
 _linux_only = pytest.mark.skipif(sys.platform == "win32", reason="Linux deploy paths")
-
-
-@_linux_only
-def test_deploy_writes_user_extension(monkeypatch, tmp_path):
-    user_root = tmp_path / "user-untrace"
-    monkeypatch.setattr(injector, "USER_UNTRACE_ROOT", user_root)
-    injector.use_user_root()
-
-    deploy_linux(stealth=True, flags=True)
-
-    assert (user_root / "extension" / "manifest.json").is_file()
-    assert (user_root / "seed_profile.py").is_file()
-    assert (user_root / "chrome").is_file()
-    assert injector.get_untrace_root() == user_root
-
-
-@_linux_only
-def test_deploy_flags_only_removes_extension(monkeypatch, tmp_path):
-    user_root = tmp_path / "user-untrace"
-    monkeypatch.setattr(injector, "USER_UNTRACE_ROOT", user_root)
-    injector.use_user_root()
-
-    deploy_linux(stealth=True, flags=True)
-    assert (user_root / "extension" / "manifest.json").is_file()
-
-    deploy_linux(flags=True)
-    assert not (user_root / "extension" / "manifest.json").is_file()
-    saved = json.loads((user_root / "config.json").read_text())
-    assert saved["js_injection"] is False
-    assert saved["chrome_flags"] is True
 
 
 @_linux_only

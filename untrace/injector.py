@@ -106,10 +106,6 @@ def use_system_root() -> Path:
     return use_untrace_root(SYSTEM_UNTRACE_ROOT)
 
 
-def use_user_root() -> Path:
-    return use_untrace_root(USER_UNTRACE_ROOT)
-
-
 def clear_untrace_root_override() -> None:
     global _active_root
     _active_root = None

@@ -80,7 +80,7 @@ def _selenium_manager_candidates() -> list[Path]:
         import selenium.webdriver.common.selenium_manager as sm
 
         candidates.append(
-            Path(sm.__file__).parent.parent / platform_dir / f"selenium-manager{exe}"
+            Path(sm.__file__).parent / platform_dir / f"selenium-manager{exe}"
         )
     except ImportError:
         pass

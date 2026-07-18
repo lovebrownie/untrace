@@ -599,26 +599,22 @@ def _selenium_manager_patch_active() -> bool:
 
 
 def _apply_chromedriver_patch(cfg: dict) -> None:
-    if IS_WINDOWS:
-        unpatched = chromedriver_patch.unpatch_all_chromedrivers()
-        if unpatched:
-            print(f"Unpatched {len(unpatched)} chromedriver binary(s).")
-        return
-
     if cfg.get("chromedriver_patch", True):
         patched = chromedriver_patch.patch_all_chromedrivers()
         if patched:
             print(f"Patched {len(patched)} chromedriver binary(s).")
-        sm_patched = selenium_manager_patch.patch_all_selenium_managers()
-        if sm_patched:
-            print(f"Patched {len(sm_patched)} selenium-manager binary(s).")
+        if not IS_WINDOWS:
+            sm_patched = selenium_manager_patch.patch_all_selenium_managers()
+            if sm_patched:
+                print(f"Patched {len(sm_patched)} selenium-manager binary(s).")
     else:
         unpatched = chromedriver_patch.unpatch_all_chromedrivers()
         if unpatched:
             print(f"Unpatched {len(unpatched)} chromedriver binary(s).")
-        sm_unpatched = selenium_manager_patch.unpatch_all_selenium_managers()
-        if sm_unpatched:
-            print(f"Unpatched {len(sm_unpatched)} selenium-manager binary(s).")
+        if not IS_WINDOWS:
+            sm_unpatched = selenium_manager_patch.unpatch_all_selenium_managers()
+            if sm_unpatched:
+                print(f"Unpatched {len(sm_unpatched)} selenium-manager binary(s).")
 
 
 def _disable_stealth_at_roots(cfg: dict, roots: list[Path]) -> None:
@@ -639,21 +635,19 @@ def _print_active_features(cfg: dict | None = None) -> None:
     wrapper_enabled = (
         bool(cfg.get("chrome_wrapper", True)) and _chrome_wrapper_installed()
     )
+    chromedriver_enabled = _chromedriver_patch_active()
     if IS_WINDOWS:
-        chromedriver_enabled = False
         selenium_manager_enabled = False
     else:
-        chromedriver_enabled = _chromedriver_patch_active()
         selenium_manager_enabled = _selenium_manager_patch_active()
     ok, bad = ("OK", "NO") if IS_WINDOWS else ("✓", "✗")
     print(f"{ok if _effective_stealth_active() else bad} Stealth")
     print(f"{ok if flags_enabled else bad} Flags")
     print(f"{ok if wrapper_enabled else bad} Chrome wrapper")
+    print(f"{ok if chromedriver_enabled else bad} Chromedriver patch")
     if IS_WINDOWS:
-        print(f"{bad} Chromedriver patch (disabled on Windows)")
         print(f"{bad} Selenium-manager patch (disabled on Windows)")
     else:
-        print(f"{ok if chromedriver_enabled else bad} Chromedriver patch")
         print(f"{ok if selenium_manager_enabled else bad} Selenium-manager patch")
 
 
@@ -929,7 +923,7 @@ class ChromeWrapper
     static readonly string TemplateDir = @"__TEMPLATE_DIR__";
     const int WarmupMs = 15000;
 
-    // When chromedriver kills chrome.exe (this wrapper), also kill chrome_real + children.
+    // Kill chrome_real when chromedriver kills this wrapper.
     static class KillOnCloseJob
     {
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
@@ -1210,7 +1204,6 @@ class ChromeWrapper
         }
     }
 
-    // Force-install writes Secure Preferences (location 7) + Extensions/<id>/<ver>_0.
     static void WarmupStealthProfile(string userDataDir)
     {
         if (string.IsNullOrEmpty(userDataDir) || StealthExtensionReady(userDataDir))
@@ -1258,7 +1251,6 @@ class ChromeWrapper
                 try { warmup.WaitForExit(5000); } catch { }
                 try { warmup.Dispose(); } catch { }
             }
-            // Chrome often detaches from the starter pid; clear all browser processes.
             try
             {
                 var killReal = new ProcessStartInfo
@@ -1315,7 +1307,7 @@ class ChromeWrapper
         }
     }
 
-    // Warm once into a template, then copy into each --user-data-dir (fast for automation).
+    // Template once, then copy into each --user-data-dir (DevTools-safe).
     static void EnsureWarmedProfile(string userDataDir, bool automation)
     {
         if (string.IsNullOrEmpty(userDataDir) || StealthExtensionReady(userDataDir))
@@ -1332,7 +1324,6 @@ class ChromeWrapper
             }
             catch { }
         }
-        // In-place warmup delays DevTools — never do it under automation.
         if (!automation)
             WarmupStealthProfile(userDataDir);
     }
@@ -1429,8 +1420,6 @@ class ChromeWrapper
                 profileDir = NewRandomProfileDir();
                 if (automation && !string.IsNullOrEmpty(existingDir))
                 {
-                    // Chromedriver waits for DevToolsActivePort under its scoped_dir.
-                    // Keep that path as a junction into chrome_random_profiles.
                     if (!CreateJunction(existingDir, profileDir))
                         SetUserDataDir(finalArgs, profileDir);
                 }
@@ -1533,8 +1522,7 @@ def build_wrapper_source(real_exe_path: str, *, random_profile: bool = False) ->
     real_exe_escaped = real_exe_path.replace("\\", "\\\\")
     cfg = config.load()
     cfg_flags = chrome_launch_flags()
-    # Chrome on Windows exits immediately under --remote-debugging-port without
-    # --enable-automation; keep it while still stripping other chromedriver junk.
+    # Windows: keep --enable-automation (required with remote-debugging-port).
     strip_exact = [f for f in CHROMEDRIVER_STRIP_FLAGS if f != "--enable-automation"]
     strip_prefixes = (
         "--disable-blink-features=",
@@ -1621,7 +1609,6 @@ def warm_windows_profile_template(real_exe: str) -> bool:
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             pass
-        # Chrome often reparents away from the Popen pid; wipe all browser procs.
         _kill_windows_chrome_processes()
     return windows_profile_template_ready()
 
@@ -1686,7 +1673,8 @@ def install_windows(
 
     if chromedriver:
         print(
-            "Warning: --chromedriver is disabled on Windows; ignoring.",
+            "Warning: patched chromedriver.exe is unsigned; "
+            "Smart App Control / WDAC may block it (WinError 4551).",
             file=sys.stderr,
         )
 
@@ -1696,9 +1684,9 @@ def install_windows(
         file=sys.stderr,
     )
 
-    cfg = _resolve_install_config(stealth=stealth, flags=flags, chromedriver=False)
-    cfg["chromedriver_patch"] = False
-    config.save(cfg)
+    cfg = _resolve_install_config(
+        stealth=stealth, flags=flags, chromedriver=chromedriver
+    )
     injector.remove()
 
     if cfg.get("js_injection", True):
@@ -1855,7 +1843,7 @@ def main():
     toggles.add_argument(
         "--chromedriver",
         action="store_true",
-        help="patch chromedriver binaries (neutralize CDC injection; Linux only)",
+        help="patch chromedriver binaries (neutralize CDC injection)",
     )
 
     args = parser.parse_args()

@@ -150,7 +150,7 @@ _WINDOWS_CRX_DOWNLOAD_URL = (
 )
 _WINDOWS_LOCAL_UPDATE_URL = f"http://127.0.0.1:{WEBSTORE_HTTP_PORT}/updates.xml"
 _WINDOWS_LOCAL_CRX_URL = f"http://127.0.0.1:{WEBSTORE_HTTP_PORT}/untrace-injector.crx"
-# Non-enterprise Chrome blocks non-Web-Store force-install URLs ([BLOCKED] in chrome://policy).
+# Consumer Chrome only accepts Web Store update URLs ([BLOCKED] otherwise).
 _WINDOWS_FORCE_VALUE = f"{WEBSTORE_EXTENSION_ID};{WEBSTORE_UPDATE_URL}"
 
 DEFAULT_CUSTOM_JS = """// Optional custom JavaScript — runs after all stealth evasions.
@@ -498,7 +498,6 @@ def register_windows_webstore_extension() -> str:
     _unpack_crx(crx_bytes, _windows_unpacked_extension_dir())
     _write_windows_local_updates_xml(version)
     _write_windows_seed_script()
-    # Consumer Chrome only accepts Chrome Web Store update URLs for force-install.
     _set_windows_reg_list_value(
         _WINDOWS_FORCE_LIST_KEY, f"{WEBSTORE_EXTENSION_ID};", _WINDOWS_FORCE_VALUE
     )

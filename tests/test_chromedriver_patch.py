@@ -18,8 +18,11 @@ def test_patch_chromedriver_binary_replaces_cdc_block(tmp_path):
     patched = driver.read_bytes()
     assert chromedriver_patch.PATCH_MARKER in patched
     assert b"window.cdc_" not in patched
-    assert b"enable-automation" not in patched
-    assert b"disable-automatio" not in patched
+    assert b"test-type=webdriver" not in patched
+    if sys.platform == "win32":
+        assert b"enable-automation" in patched
+    else:
+        assert b"enable-automation" not in patched
     assert chromedriver_patch.backup_path(driver).is_file()
     assert chromedriver_patch.patch_chromedriver_binary(driver) is True
 

@@ -19,9 +19,18 @@ BACKUP_SUFFIX = ".untrace.bak"
 
 _BINARY_NOP = b" "
 
-BINARY_STRING_PATCHES: tuple[tuple[bytes, bytes], ...] = (
-    (b"enable-automation", _BINARY_NOP * len(b"enable-automation")),
+# Windows must keep enable-automation in the driver (remote-debugging-port).
+_BINARY_STRING_PATCHES_COMMON: tuple[tuple[bytes, bytes], ...] = (
     (b"test-type=webdriver", _BINARY_NOP * len(b"test-type=webdriver")),
+)
+_BINARY_STRING_PATCHES_LINUX_ONLY: tuple[tuple[bytes, bytes], ...] = (
+    (b"enable-automation", _BINARY_NOP * len(b"enable-automation")),
+)
+
+BINARY_STRING_PATCHES: tuple[tuple[bytes, bytes], ...] = (
+    _BINARY_STRING_PATCHES_COMMON
+    if IS_WINDOWS
+    else _BINARY_STRING_PATCHES_COMMON + _BINARY_STRING_PATCHES_LINUX_ONLY
 )
 
 

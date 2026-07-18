@@ -8,10 +8,10 @@ Four optional layers, toggled independently:
 |-------|------|-------------|
 | **Stealth** | `--stealth` | MV3 extension — injects scripts at `document_start` in the `MAIN` world on every frame. **Linux:** local pack/seed. **Windows:** [Chrome Web Store force-install](https://chromewebstore.google.com/detail/untrace-injector/mgnlenokophofdnmlabkgpmlnolgomgj) |
 | **Chrome wrapper** | `--flags` | Replaces Chrome with a wrapper in front of `chrome_real` (bash on Linux, C# on Windows). Strips chromedriver junk flags, applies launcher flags, seeds the extension into profiles (**Linux**). **Windows:** random profiles under `%TEMP%\chrome_random_profiles` for manual and Selenium |
-| **Chromedriver patch** | `--chromedriver` | Neutralizes the CDC (`window.cdc_*`) injection in cached chromedriver binaries (restored from `.untrace.bak` on uninstall). **Linux only** — see [Windows](#windows) |
+| **Chromedriver patch** | `--chromedriver` | Neutralizes the CDC (`window.cdc_*`) injection in cached chromedriver binaries (and blanks `test-type=webdriver`). **Linux** also blanks `enable-automation` in the driver. **Windows** leaves `enable-automation` intact (Chrome needs it under remote debugging). Patched PE is unsigned — WDAC/SAC may block it (`WinError 4551`) |
 | **Selenium-manager patch** | `--chromedriver` (with deploy/install) | Points Selenium's `selenium-manager` at the user Chrome wrapper so `webdriver.Chrome()` uses untrace automatically (**Linux only**) |
 
-Bare `--install` or `--deploy` (no flags) enables all three feature flags (`--stealth`, `--flags`, `--chromedriver`). On Windows, chromedriver patching is always skipped; stealth uses the Web Store extension (not the Linux local pack).
+Bare `--install` or `--deploy` (no flags) enables all three feature flags (`--stealth`, `--flags`, `--chromedriver`). On Windows, selenium-manager patching is skipped; stealth uses the Web Store extension (not the Linux local pack).
 
 ## Quick start
 
@@ -56,12 +56,12 @@ sudo python3 -m untrace --uninstall
 Run an elevated PowerShell / terminal (Admin), close Chrome first:
 
 ```powershell
-python -m untrace --install --stealth --flags
+python -m untrace --install --stealth --flags --chromedriver
 python -m untrace --status
 python -m untrace --uninstall
 ```
 
-`--deploy` is not supported on Windows yet. `--chromedriver` does not patch binaries (see below). `--stealth` force-installs [Untrace Injector](https://chromewebstore.google.com/detail/untrace-injector/mgnlenokophofdnmlabkgpmlnolgomgj) from the Chrome Web Store (requires Admin for the policy registry keys) and warms a reusable profile template under `%PROGRAMDATA%\Untrace`.
+`--deploy` is not supported on Windows yet. `--stealth` force-installs [Untrace Injector](https://chromewebstore.google.com/detail/untrace-injector/mgnlenokophofdnmlabkgpmlnolgomgj) from the Chrome Web Store (Admin for policy keys) and warms `%PROGRAMDATA%\Untrace\chrome_profile_template`. `--chromedriver` patches cached drivers (keep App Control off if the unsigned PE is blocked).
 
 ## Windows
 
@@ -72,14 +72,14 @@ Windows uses the **flags / Chrome wrapper** plus optional **Web Store stealth**.
 | **Stealth** | `ExtensionInstallForcelist` with the Chrome Web Store update URL only (non-enterprise Chrome blocks local/`http://` hosts — `[BLOCKED]` in `chrome://policy`). Install warms `%PROGRAMDATA%\Untrace\chrome_profile_template` once so force-install can write `Secure Preferences` (`location: 7`). That warmup opens a normal Chrome window briefly, then **kills all `chrome_real.exe` / `chrome.exe` processes**. The wrapper **copies** the template into each session profile before launch (no DevTools delay for Selenium). |
 | **Profiles** | Manual (`--flags`) and Selenium both use `%TEMP%\chrome_random_profiles\profile_*`. Chromedriver’s temp `scoped_dir` is a **junction** into that tree so `DevToolsActivePort` still resolves. |
 | **Chrome wrapper** | `chrome.exe` → C# wrapper; real browser → `chrome_real.exe`. Strips chromedriver junk, applies launcher flags, **waits** for Chrome (no `exec`). Tracks `chrome_real` in a Job Object (`KILL_ON_JOB_CLOSE`) so `driver.quit()` also tears down Chrome children. |
-| **`--enable-automation`** | **Kept** on Windows — Chrome exits under `--remote-debugging-port` if this flag is stripped; Selenium then fails with “Chrome instance exited” |
-| **Chromedriver patch** | **Disabled** — editing the signed `chromedriver.exe` breaks Authenticode; Windows Application Control blocks the file (`WinError 4551`). Status always shows it as disabled |
+| **`--enable-automation`** | **Kept** in the wrapper **and** in the chromedriver binary patch — Chrome exits under `--remote-debugging-port` without it |
+| **Chromedriver patch** | CDC + blank `test-type=webdriver`; does **not** blank `enable-automation`. Edited PE is unsigned — SAC/WDAC may block (`WinError 4551`) |
 | **Selenium-manager** | Not patched (bash wrapper is Linux-only) |
 | **Roots** | `%LOCALAPPDATA%\Untrace`, `%PROGRAMDATA%\Untrace` |
 
-If Selenium dies with “Chrome instance exited” after install, check that chromedriver was not left patched (`--uninstall` or re-run `--install --flags` to restore backups) and that the C# wrapper is current.
+If Selenium dies with “Chrome instance exited” after install, confirm the C# wrapper is current and that `--enable-automation` still reaches Chrome (Windows must not strip or binary-blank that flag). If the driver won’t start at all, check Smart App Control / WDAC (`WinError 4551`) and restore from `.untrace.bak` via `--uninstall` if needed.
 
-> **Warning:** If **Smart App Control** (or another Application Control / WDAC policy) is enabled on Windows, untrace may not work. The Chrome wrapper replaces `chrome.exe` with an unsigned C# binary; Smart App Control can block it from running. Turn Smart App Control off (or switch it to evaluation/off) if install succeeds but Chrome or Selenium still fails to launch. The chromedriver binary patch is already skipped on Windows for the same reason (patched signed drivers are blocked with `WinError 4551`). Close other Chrome windows before `--install --stealth`: template warmup ends by killing all Chrome processes on the machine.
+> **Warning:** If **Smart App Control** (or another Application Control / WDAC policy) is enabled on Windows, untrace may not work. The Chrome wrapper replaces `chrome.exe` with an unsigned C# binary, and `--chromedriver` produces an unsigned `chromedriver.exe`; Smart App Control can block either (`WinError 4551` for the driver). Turn Smart App Control off (or switch it to evaluation/off) if install succeeds but Chrome or Selenium still fails to launch. Close other Chrome windows before `--install --stealth`: template warmup ends by killing all Chrome processes on the machine.
 
 ## Feature flags
 
@@ -96,7 +96,7 @@ Each flag only enables its own layer. Combine as needed:
 
 - **`--stealth`** — extension only. Stock Chrome binary, normal profile, no chromedriver patch.
 - **`--flags`** — patches Chrome (`chrome` → wrapper, real binary → `chrome_real`). Random `--user-data-dir` on manual launches (Linux) / `%TEMP%\chrome_random_profiles` for manual **and** Selenium (Windows). No extension unless `--stealth` is also passed.
-- **`--chromedriver`** — patches/unpatches Selenium's cached chromedriver binaries and selenium-manager wrappers.
+- **`--chromedriver`** — patches/unpatches Selenium's cached chromedriver binaries (and selenium-manager wrappers on Linux).
 
 Passing a flag off on reinstall disables that layer (e.g. `--install --stealth` unpatches chromedrivers and removes the Chrome wrapper if it was there).
 
@@ -133,7 +133,7 @@ When the wrapper is active it strips chromedriver junk (`--disable-blink-feature
 pytest tests/test_chromedriver.py
 ```
 
-Requires a prior install: Linux `python -m untrace --deploy --stealth --flags --chromedriver` (or `--install`); Windows `python -m untrace --install --stealth --flags`. `chrome_driver` in `tests/conftest.py` is intentionally minimal — fix failures in untrace, not the fixture. Linux-only unit tests are skipped on Windows.
+Requires a prior install: Linux `python -m untrace --deploy --stealth --flags --chromedriver` (or `--install`); Windows `python -m untrace --install --stealth --flags --chromedriver`. `chrome_driver` in `tests/conftest.py` is intentionally minimal — fix failures in untrace, not the fixture. Linux-only unit tests are skipped on Windows.
 
 | Test | Target |
 |------|--------|

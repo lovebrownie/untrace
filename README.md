@@ -64,9 +64,10 @@ OK Selenium-manager patch
 
 ```powershell
 poetry run task build-gui
-# dist\Untrace-v0.1.0.exe          portable (Admin UAC)
-# dist\Untrace-v0.1.0-Setup.exe    installer (needs Inno Setup to build)
-# run the Setup, or the portable exe
+# dist\Untrace-v0.1.0-Portable.exe     portable (Admin UAC)
+# dist\Untrace-v0.1.0-Setup.exe        installer (embeds VC++ + Inno Setup 6; installs them then Untrace)
+# dist\Untrace-v0.1.0-Windows.zip      Setup + Portable + INSTRUCTIONS.txt
+# run the Setup (Admin), or the portable exe
 untrace              # after Setup: on PATH
 untrace --status
 untrace --gui
@@ -94,7 +95,7 @@ python -m untrace --build
 
 | Platform | Artifact |
 |----------|----------|
-| Windows | `dist/Untrace-v0.1.0-Setup.exe` (Inno Setup) + `dist/Untrace-v0.1.0.exe` (portable) |
+| Windows | `dist/Untrace-v0.1.0-Setup.exe` (auto-installs VC++ + Inno Setup 6, then Untrace) + `dist/Untrace-v0.1.0-Portable.exe` + `dist/Untrace-v0.1.0-Windows.zip` |
 | Linux | `dist/untrace_0.1.0_amd64.deb` |
 | Both | `dist/untrace-injector-v0.1.0.zip` (extension; version from `pyproject.toml`) |
 
@@ -126,7 +127,7 @@ Windows uses the **flags / Chrome wrapper** plus optional **Web Store stealth**.
 |-------|----------|
 | **Stealth** | `ExtensionInstallForcelist` with the Chrome Web Store update URL only (non-enterprise Chrome blocks local/`http://` hosts — `[BLOCKED]` in `chrome://policy`). Install warms `%PROGRAMDATA%\Untrace\chrome_profile_template` once so force-install can write `Secure Preferences` (`location: 7`). That warmup starts Chrome **minimized / off-screen**, then **kills all `chrome_real.exe` / `chrome.exe` processes**. The wrapper **copies** the template into each session profile before launch (no DevTools delay for Selenium). |
 | **GUI** | `python -m untrace --gui` (or `poetry run task gui`). Elevates via UAC; hides the PyInstaller console so only the Tk window shows. Shows **Install** or **Update**, status cards, in-app confirmations. Writes `Documents/Untrace/untrace.log`. |
-| **Build** | `python -m untrace --build` → `dist/Untrace-vX.Y.Z-Setup.exe` + `dist/Untrace-vX.Y.Z.exe` (portable) + extension zip. Requires [Inno Setup 6](https://jrsoftware.org/isinfo.php) (`ISCC.exe`) — `winget install JRSoftware.InnoSetup` or `choco install innosetup`. |
+| **Build** | `python -m untrace --build` → Setup (embeds VC++ redistributable + Inno Setup 6; installs them silently before Untrace) + Portable + Windows zip + extension zip. Building Setup needs [Inno Setup 6](https://jrsoftware.org/isinfo.php) (`ISCC.exe`) on the build machine — `winget install JRSoftware.InnoSetup` or `choco install innosetup`. |
 | **Profiles** | Manual (`--flags`) and Selenium both use `%TEMP%\chrome_random_profiles\profile_*`. Chromedriver’s temp `scoped_dir` is a **junction** into that tree so `DevToolsActivePort` still resolves. |
 | **Chrome wrapper** | `chrome.exe` → C# wrapper; real browser → `chrome_real.exe`. Strips chromedriver junk, applies launcher flags, **waits** for Chrome (no `exec`). Tracks `chrome_real` in a Job Object (`KILL_ON_JOB_CLOSE`) so `driver.quit()` also tears down Chrome children. |
 | **`--enable-automation`** | **Kept** in the wrapper **and** in the chromedriver binary patch — Chrome exits under `--remote-debugging-port` without it. The “Chrome is being controlled by automated test software” bar is expected on Windows. |

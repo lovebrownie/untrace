@@ -1541,6 +1541,77 @@ def _kill_windows_chrome_processes() -> None:
         )
 
 
+def _windows_process_tree_pids(root_pid: int) -> set[int]:
+    import ctypes
+    from ctypes import wintypes
+
+    TH32CS_SNAPPROCESS = 0x2
+
+    class PROCESSENTRY32W(ctypes.Structure):
+        _fields_ = (
+            ("dwSize", wintypes.DWORD),
+            ("cntUsage", wintypes.DWORD),
+            ("th32ProcessID", wintypes.DWORD),
+            ("th32DefaultHeapID", ctypes.c_size_t),
+            ("th32ModuleID", wintypes.DWORD),
+            ("cntThreads", wintypes.DWORD),
+            ("th32ParentProcessID", wintypes.DWORD),
+            ("pcPriClassBase", ctypes.c_long),
+            ("dwFlags", wintypes.DWORD),
+            ("szExeFile", wintypes.WCHAR * 260),
+        )
+
+    kernel32 = ctypes.windll.kernel32
+    snapshot = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+    if snapshot in (-1, 0):
+        return {root_pid}
+
+    pids = {root_pid}
+    children: dict[int, list[int]] = {}
+    try:
+        entry = PROCESSENTRY32W()
+        entry.dwSize = ctypes.sizeof(PROCESSENTRY32W)
+        more = kernel32.Process32FirstW(snapshot, ctypes.byref(entry))
+        while more:
+            children.setdefault(entry.th32ParentProcessID, []).append(
+                entry.th32ProcessID
+            )
+            more = kernel32.Process32NextW(snapshot, ctypes.byref(entry))
+        stack = [root_pid]
+        while stack:
+            current = stack.pop()
+            for child in children.get(current, []):
+                if child not in pids:
+                    pids.add(child)
+                    stack.append(child)
+    finally:
+        kernel32.CloseHandle(snapshot)
+    return pids
+
+
+def _minimize_windows_for_pids(pids: set[int]) -> None:
+    if not pids:
+        return
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    SW_SHOWMINNOACTIVE = 7
+    WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+    def _enum(hwnd: int, _lparam: int) -> bool:
+        if not user32.IsWindowVisible(hwnd):
+            return True
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        if pid.value in pids:
+            user32.ShowWindow(hwnd, SW_SHOWMINNOACTIVE)
+        return True
+
+    callback = WNDENUMPROC(_enum)
+    user32.EnumWindows(callback, 0)
+
+
 def warm_windows_profile_template(real_exe: str) -> bool:
     if windows_profile_template_ready():
         return True
@@ -1549,6 +1620,9 @@ def warm_windows_profile_template(real_exe: str) -> bool:
 
     template = windows_profile_template_dir()
     template.mkdir(parents=True, exist_ok=True)
+    startup = subprocess.STARTUPINFO()
+    startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    startup.wShowWindow = 7  # SW_SHOWMINNOACTIVE
     proc = subprocess.Popen(
         [
             real_exe,
@@ -1557,14 +1631,19 @@ def warm_windows_profile_template(real_exe: str) -> bool:
             "--no-default-browser-check",
             "--disable-sync",
             "--disable-gpu",
+            "--start-minimized",
+            "--window-position=-32000,-32000",
+            "--window-size=800,600",
             "about:blank",
         ],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+        startupinfo=startup,
     )
     try:
         deadline = time.time() + 15
         while time.time() < deadline:
+            _minimize_windows_for_pids(_windows_process_tree_pids(proc.pid))
             if windows_profile_template_ready():
                 break
             time.sleep(0.2)

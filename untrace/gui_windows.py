@@ -512,14 +512,24 @@ class TerminalScrollbar(tk.Canvas):
         span = max(0.05, self._last - self._first)
         self.create_rectangle(0, 0, w, h, fill=BG, outline="")
         self.create_rectangle(5, 18, w - 5, h - 18, fill=GREEN_DARK, outline="")
-        self.create_text(w // 2, 8, text="▲", fill=GREEN if self._hover else MUTED, font=(FONT, 7))
-        self.create_text(w // 2, h - 8, text="▼", fill=GREEN if self._hover else MUTED, font=(FONT, 7))
+        self.create_text(
+            w // 2, 8, text="▲", fill=GREEN if self._hover else MUTED, font=(FONT, 7)
+        )
+        self.create_text(
+            w // 2,
+            h - 8,
+            text="▼",
+            fill=GREEN if self._hover else MUTED,
+            font=(FONT, 7),
+        )
         thumb_h = max(32, int(span * (h - 36)))
         thumb_y = 18 + int(self._first * (h - 36 - thumb_h))
         color = GREEN_BRIGHT if self._hover or self._dragging else GREEN
         pad = 3 if self._hover or self._dragging else 4
         self._thumb = (thumb_y, thumb_y + thumb_h)
-        self.create_rectangle(pad, thumb_y, w - pad, thumb_y + thumb_h, fill=color, outline="")
+        self.create_rectangle(
+            pad, thumb_y, w - pad, thumb_y + thumb_h, fill=color, outline=""
+        )
         mid = thumb_y + thumb_h // 2
         for dy in (-5, 0, 5):
             self.create_line(pad + 2, mid + dy, w - pad - 2, mid + dy, fill=GREEN_DARK)
@@ -696,16 +706,22 @@ class UntraceGui(tk.Tk):
 
         section = tk.Frame(self._body, bg=BG)
         section.pack(fill=tk.X, pady=(0, 8))
-        tk.Label(
-            section, text="┌─ modules", bg=BG, fg=MUTED, font=(FONT, 9)
-        ).pack(side=tk.LEFT)
-        tk.Label(section, text="─┐", bg=BG, fg=MUTED, font=(FONT, 9)).pack(side=tk.RIGHT)
+        tk.Label(section, text="┌─ modules", bg=BG, fg=MUTED, font=(FONT, 9)).pack(
+            side=tk.LEFT
+        )
+        tk.Label(section, text="─┐", bg=BG, fg=MUTED, font=(FONT, 9)).pack(
+            side=tk.RIGHT
+        )
 
         self.cards = tk.Frame(self._body, bg=BG)
         self.cards.pack(fill=tk.X)
 
         tk.Label(
-            self._body, text="└──────────────────────────────┘", bg=BG, fg=MUTED, font=(FONT, 9)
+            self._body,
+            text="└──────────────────────────────┘",
+            bg=BG,
+            fg=MUTED,
+            font=(FONT, 9),
         ).pack(anchor=tk.W, pady=(4, 0))
 
         actions = tk.Frame(self._body, bg=BG)

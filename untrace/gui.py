@@ -1026,7 +1026,6 @@ class UntraceGui(tk.Tk):
         self._resizing = False
         self._resize_job: str | None = None
         self._last_size = (0, 0)
-        self._asked_install = False
         self._apply_window_icon()
 
         border = tk.Frame(self, bg=GREEN, padx=1, pady=1)
@@ -1428,20 +1427,6 @@ class UntraceGui(tk.Tk):
         self._finish_ui_busy()
         if callback is not None:
             callback()
-        self._maybe_prompt_install(snapshot)
-
-    def _maybe_prompt_install(self, snapshot: dict) -> None:
-        if self._asked_install or self._busy:
-            return
-        if snapshot.get("installed") or not snapshot.get("can_install"):
-            return
-        self._asked_install = True
-        ask_confirm(
-            self,
-            "install",
-            "Untrace is not installed yet.\nInstall stealth, flags, and chromedriver now?",
-            lambda ok: self._run("install") if ok else None,
-        )
 
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy

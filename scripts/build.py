@@ -367,7 +367,8 @@ def build_gui(*, version: str | None = None) -> int:
         except Exception as exc:
             print(f"setup pack failed: {exc}", file=sys.stderr)
             print(
-                "hint: install Inno Setup 6, or use the portable exe in dist/",
+                "hint: install Inno Setup 6 from https://jrsoftware.org/isinfo.php "
+                "or: winget install JRSoftware.InnoSetup",
                 file=sys.stderr,
             )
             return 1

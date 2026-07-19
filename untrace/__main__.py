@@ -1439,7 +1439,23 @@ def is_admin_windows() -> bool:
         return False
 
 
-def ensure_admin_windows() -> None:
+def hide_windows_console() -> None:
+    if not IS_WINDOWS:
+        return
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        user32 = ctypes.windll.user32
+        hwnd = kernel32.GetConsoleWindow()
+        if hwnd:
+            user32.ShowWindow(hwnd, 0)
+        kernel32.FreeConsole()
+    except Exception:
+        pass
+
+
+def ensure_admin_windows(*, show_console: bool = True) -> None:
     if not IS_WINDOWS or is_admin_windows():
         return
     import ctypes
@@ -1452,8 +1468,11 @@ def ensure_admin_windows() -> None:
         path = sys.executable
         params = subprocess.list2cmdline(["-m", "untrace", *sys.argv[1:]])
         workdir = str(Path(__file__).resolve().parent.parent)
+    n_show = 1 if show_console else 0
     rc = int(
-        ctypes.windll.shell32.ShellExecuteW(None, "runas", path, params, workdir, 1)
+        ctypes.windll.shell32.ShellExecuteW(
+            None, "runas", path, params, workdir, n_show
+        )
     )
     if rc <= 32:
         raise SystemExit("Administrator approval is required.")
@@ -1552,9 +1571,9 @@ def ensure_linux_root() -> None:
     raise SystemExit("Root privileges are required. Re-run with sudo.")
 
 
-def ensure_privileges() -> None:
+def ensure_privileges(*, show_console: bool = True) -> None:
     if IS_WINDOWS:
-        ensure_admin_windows()
+        ensure_admin_windows(show_console=show_console)
     else:
         ensure_linux_root()
 

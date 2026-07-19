@@ -66,8 +66,10 @@ OK Selenium-manager patch
 
 ```powershell
 poetry run task build-gui
-# run dist\Untrace-v0.1.0-Setup.exe (Admin)
-untrace              # GUI
+# dist\Untrace-v0.1.0.exe          portable (Admin UAC)
+# dist\Untrace-v0.1.0-Setup.exe    installer (needs Inno Setup to build)
+# run the Setup, or the portable exe
+untrace              # after Setup: on PATH
 untrace --status
 untrace --gui
 ```
@@ -94,9 +96,11 @@ python -m untrace --build
 
 | Platform | Artifact |
 |----------|----------|
-| Windows | `dist/Untrace-v0.1.0-Setup.exe` (Inno Setup) |
+| Windows | `dist/Untrace-v0.1.0-Setup.exe` (Inno Setup) + `dist/Untrace-v0.1.0.exe` (portable) |
 | Linux | `dist/untrace_0.1.0_amd64.deb` |
 | Both | `dist/untrace-injector-v0.1.0.zip` (extension; version from `pyproject.toml`) |
+
+`poetry run task build` always packs the extension zip after the GUI/installer step (even if the Windows Setup pack fails, the portable `.exe` and zip are still written when possible).
 
 GUI-only: `poetry run task build-gui`. Extension only: `poetry run task pack-extension`.
 

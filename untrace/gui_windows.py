@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import math
-import platform
 import random
 import sys
 import threading
 import time
 import tkinter as tk
 from pathlib import Path
+
+from untrace.version import version_tag
 
 BG = "#010502"
 SURFACE = "#051208"
@@ -41,15 +42,10 @@ ICON_PNG = ASSETS_DIR / "icon.png"
 ICON_ICO = ASSETS_DIR / "icon.ico"
 
 
-def _ensure_windows() -> None:
-    if platform.system() != "Windows":
-        raise SystemExit("The Untrace GUI is Windows-only.")
-
-
 def _fetch_status() -> dict:
-    from untrace.__main__ import windows_gui_status
+    from untrace.__main__ import gui_status
 
-    return windows_gui_status()
+    return gui_status()
 
 
 def _run_action(action: str) -> int:
@@ -889,7 +885,7 @@ class TerminalScrollbar(tk.Canvas):
 class UntraceGui(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
-        self.title("untrace")
+        self.title(f"untrace {version_tag()}")
         self.minsize(540, 480)
         self.configure(bg=GREEN)
         self.geometry("960x700")
@@ -1031,7 +1027,7 @@ class UntraceGui(tk.Tk):
         foot_line.pack(fill=tk.X, pady=(0, 10))
         self._footer = tk.Label(
             foot,
-            text="log → Documents\\Untrace\\untrace.log",
+            text=f"{version_tag()}  ·  log → Documents\\Untrace\\untrace.log",
             bg=BG,
             fg=MUTED,
             font=(FONT, 8),
@@ -1372,12 +1368,11 @@ class UntraceGui(tk.Tk):
 
 
 def main() -> None:
-    _ensure_windows()
     from untrace import applog
-    from untrace.__main__ import ensure_admin_windows
+    from untrace.__main__ import ensure_privileges
 
     applog.enable(command="--gui")
-    ensure_admin_windows()
+    ensure_privileges()
     app = UntraceGui()
     app.mainloop()
 

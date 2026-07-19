@@ -28,5 +28,7 @@ known-first-party = ["untrace"]
 [tool.taskipy.tasks]
 lint = { cmd = "ruff format untrace/ tests/ && ruff check --fix untrace/ tests/", help = "Format and lint with Ruff" }
 lint-check = { cmd = "ruff format --check untrace/ tests/ && ruff check untrace/ tests/", help = "Verify formatting and lint without fixing" }
-gui = { cmd = "python -m untrace --gui", help = "Open the Windows install/uninstall GUI" }
-build-gui = { cmd = "python scripts/build_gui.py", help = "Build Untrace.exe with PyInstaller (Windows)" }
+gui = { cmd = "python -m untrace --gui", help = "Open the install/uninstall GUI" }
+build = { cmd = "python -m untrace --build", help = "Build Untrace binary + extension zip into dist/" }
+build-gui = { cmd = "python scripts/build_gui.py", help = "Build Untrace binary only into dist/" }
+pack-extension = { cmd = "python -m untrace --pack-extension", help = "Pack untrace-injector-vX.Y.Z.zip into dist/" }

@@ -59,7 +59,10 @@ def test_manifest_runs_at_document_start(temp_untrace):
 
 
 def test_extension_version_is_valid_for_chrome():
+    from untrace import __version__
+
     version = injector._extension_version()
+    assert version == __version__
     parts = version.split(".")
     assert 1 <= len(parts) <= 4
     for part in parts:

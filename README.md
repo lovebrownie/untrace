@@ -66,18 +66,21 @@ Pack a Chrome Web Store upload zip (no `key` in manifest). The zip includes tran
 
 ```powershell
 python -m untrace --pack-extension
-# optional: --output path\to\untrace-injector.zip --version 1.2.3
+# or: poetry run task pack-extension
 ```
 
-Default output: `%USERPROFILE%\Documents\Untrace\untrace-injector.zip`.
+Default output: `dist/untrace-injector-v0.1.0.zip` (version from `pyproject.toml`).
 
-The GUI asks for Admin on launch (window icon from `assets/icon.ico`). Primary action is **Install** when nothing is present, **Update** when Untrace is already installed. Logs append to `%USERPROFILE%\Documents\Untrace\untrace.log`.
+Build the GUI binary and the extension zip into `dist/`:
 
-Build a standalone `dist\Untrace.exe` (optional):
-
-```powershell
-poetry run task build-gui
+```bash
+python -m untrace --build
+# or: poetry run task build
 ```
+
+Writes `dist/Untrace-v0.1.0.exe` (Windows) or `dist/Untrace-v0.1.0` (Linux), plus `dist/untrace-injector-v0.1.0.zip`. GUI-only: `poetry run task build-gui`.
+
+The GUI asks for elevated privileges on launch (UAC on Windows, pkexec/sudo on Linux). Window title is `untrace vX.Y.Z`. Primary action is **Install** when nothing is present, **Update** when Untrace is already installed. Logs append to `Documents/Untrace/untrace.log`.
 
 `--deploy` is not supported on Windows yet. `--stealth` force-installs [Untrace Injector](https://chromewebstore.google.com/detail/untrace-injector/mgnlenokophofdnmlabkgpmlnolgomgj) from the Chrome Web Store (Admin for policy keys) and warms `%PROGRAMDATA%\Untrace\chrome_profile_template`. `--chromedriver` patches cached drivers (keep App Control off if the unsigned PE is blocked).
 
@@ -88,7 +91,8 @@ Windows uses the **flags / Chrome wrapper** plus optional **Web Store stealth**.
 | Topic | Behavior |
 |-------|----------|
 | **Stealth** | `ExtensionInstallForcelist` with the Chrome Web Store update URL only (non-enterprise Chrome blocks local/`http://` hosts — `[BLOCKED]` in `chrome://policy`). Install warms `%PROGRAMDATA%\Untrace\chrome_profile_template` once so force-install can write `Secure Preferences` (`location: 7`). That warmup starts Chrome **minimized / off-screen**, then **kills all `chrome_real.exe` / `chrome.exe` processes**. The wrapper **copies** the template into each session profile before launch (no DevTools delay for Selenium). |
-| **GUI** | `python -m untrace --gui` (or `poetry run task gui`). Elevates via UAC. Shows **Install** or **Update**, status cards, in-app confirmations. Writes `%USERPROFILE%\Documents\Untrace\untrace.log`. Optional `poetry run task build-gui` → `dist\Untrace.exe`. |
+| **GUI** | `python -m untrace --gui` (or `poetry run task gui`). Elevates via UAC (Windows) or pkexec/sudo (Linux). Window title is `untrace vX.Y.Z`. Shows **Install** or **Update**, status cards, in-app confirmations. Writes `Documents/Untrace/untrace.log`. |
+| **Build** | `python -m untrace --build` → `dist/Untrace-vX.Y.Z` (+ `.exe` on Windows) and `dist/untrace-injector-vX.Y.Z.zip`. |
 | **Profiles** | Manual (`--flags`) and Selenium both use `%TEMP%\chrome_random_profiles\profile_*`. Chromedriver’s temp `scoped_dir` is a **junction** into that tree so `DevToolsActivePort` still resolves. |
 | **Chrome wrapper** | `chrome.exe` → C# wrapper; real browser → `chrome_real.exe`. Strips chromedriver junk, applies launcher flags, **waits** for Chrome (no `exec`). Tracks `chrome_real` in a Job Object (`KILL_ON_JOB_CLOSE`) so `driver.quit()` also tears down Chrome children. |
 | **`--enable-automation`** | **Kept** in the wrapper **and** in the chromedriver binary patch — Chrome exits under `--remote-debugging-port` without it |
@@ -190,15 +194,17 @@ Optional (off by default): `iframe.contentWindow`, `navigator.plugins`, `navigat
 assets/
   icon.svg               Brand mark (transparent background)
   icon.png / icon-*.png  Raster icons (16 / 48 / 128) for the extension + GUI
-  icon.ico               Windows GUI / PyInstaller icon
+  icon.ico               GUI / PyInstaller icon
 untrace/
+  __init__.py            Exports __version__ (from pyproject.toml)
+  version.py             Reads [project].version; artifact name helpers
   __main__.py            CLI, Chrome wrapper, script catalog
   injector.py            Extension build, icons → manifest, profile seeding
   chromedriver_patch.py  CDC patch / unpatch with .untrace.bak
   selenium_manager_patch.py  Patch selenium-manager to use the Chrome wrapper
   config.py              Persisted feature flags per root
-  gui_windows.py         Windows install/update GUI
-  applog.py              Documents\\Untrace\\untrace.log tee
+  gui_windows.py         Install/update GUI (Windows + Linux)
+  applog.py              Documents/Untrace/untrace.log tee
   js/                    Stealth injection sources
 tests/
   test_chromedriver.py   Browser integration tests
@@ -207,14 +213,26 @@ tests/
 
 Linux `--install --stealth` and `--pack-extension` copy `assets/icon-{16,48,128}.png` into the extension `icons/` folder and wire them into `manifest.json` (`icons` + `action.default_icon`).
 
+One version for the package, extension, and GUI — bump `[project].version` in `pyproject.toml`:
+
+```python
+from untrace import __version__
+```
+
+Extension builds and `--pack-extension` use `__version__` unless `--version` is passed.
+
 ## Development
 
 ```bash
 poetry install
 poetry run task lint          # format + fix with Ruff
 poetry run task lint-check    # verify only (CI)
-poetry run task gui           # Windows GUI (Admin)
-poetry run task build-gui     # dist\\Untrace.exe (Windows + PyInstaller)
-python -m untrace --pack-extension   # Chrome Web Store zip → Documents/Untrace/
+poetry run task gui           # install/uninstall GUI (elevates)
+poetry run task build         # dist/Untrace-vX.Y.Z(+.exe) + extension zip
+poetry run task build-gui     # dist/Untrace-vX.Y.Z(+.exe) only
+poetry run task pack-extension  # dist/untrace-injector-vX.Y.Z.zip only
+python -m untrace --build     # same as task build
 pytest
 ```
+
+CI (`.github/workflows/ci.yml`) runs lint + unit tests on Ubuntu and Windows, then builds `dist/` (GUI binary + extension zip) and uploads artifacts named `untrace-<OS>-vX.Y.Z`.

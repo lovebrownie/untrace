@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import base64
-import datetime
 import hashlib
 import io
 import json
@@ -16,6 +15,8 @@ import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
+
+from untrace.version import __version__
 
 IS_WINDOWS = platform.system() == "Windows"
 
@@ -617,8 +618,7 @@ def extension_id() -> str:
 
 
 def _extension_version() -> str:
-    ts = int(datetime.datetime.now(datetime.timezone.utc).timestamp())
-    return f"1.{(ts // (65536 * 65536)) % 65536}.{(ts // 65536) % 65536}.{ts % 65536}"
+    return __version__
 
 
 def wrap_iife(source: str, args: list | None = None) -> str:

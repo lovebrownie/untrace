@@ -39,3 +39,68 @@ jobs:
 
       - name: Unit tests
         run: poetry run pytest --ignore=tests/test_chromedriver.py -q
+
+  build:
+    name: Build ${{ matrix.os }}
+    needs: test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install Poetry
+        run: python -m pip install poetry
+
+      - name: Install dependencies
+        run: poetry install --with dev
+
+      - name: Install Linux GUI build deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            python3-tk \
+            tcl-dev \
+            tk-dev \
+            libx11-dev \
+            libxext-dev
+
+      - name: Resolve version
+        id: ver
+        shell: bash
+        run: echo "version=$(poetry version -s)" >> "$GITHUB_OUTPUT"
+
+      - name: Build dist (Windows)
+        if: runner.os == 'Windows'
+        run: poetry run task build
+
+      - name: Build dist (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          if poetry run python -c "import tkinter" 2>/dev/null; then
+            poetry run task build
+          else
+            echo "tkinter unavailable; packing extension zip only"
+            poetry run task pack-extension
+          fi
+
+      - name: List dist
+        shell: bash
+        run: ls -la dist
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: untrace-${{ runner.os }}-v${{ steps.ver.outputs.version }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14

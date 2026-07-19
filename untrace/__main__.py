@@ -646,10 +646,21 @@ def _print_active_features(cfg: dict | None = None) -> None:
         print(f"{ok if selenium_manager_enabled else bad} Selenium-manager patch")
 
 
-def windows_gui_status() -> dict:
+def gui_status() -> dict:
     cfg = config.load()
-    chrome = find_chrome_windows()
-    wrapper_on = bool(cfg.get("chrome_wrapper", True)) and _chrome_wrapper_installed()
+    if IS_WINDOWS:
+        chrome = find_chrome_windows()
+        chrome_found = bool(chrome)
+        wrapper_on = (
+            bool(cfg.get("chrome_wrapper", True)) and _chrome_wrapper_installed()
+        )
+    else:
+        chrome_found = os.path.isfile(CHROME_BINARY) or os.path.isfile(
+            chrome_real_path()
+        )
+        wrapper_on = (
+            bool(cfg.get("chrome_wrapper", True)) and _chrome_wrapper_installed()
+        )
     flags_on = bool(cfg.get("chrome_flags", True)) and wrapper_on
     stealth_on = _effective_stealth_active()
     chromedriver_on = _chromedriver_patch_active()
@@ -661,12 +672,16 @@ def windows_gui_status() -> dict:
     ]
     any_on = any(f["on"] for f in features)
     return {
-        "chrome_found": bool(chrome),
+        "chrome_found": chrome_found,
         "installed": wrapper_on or any_on,
         "features": features,
-        "can_install": bool(chrome),
+        "can_install": chrome_found,
         "can_uninstall": wrapper_on or any_on,
     }
+
+
+def windows_gui_status() -> dict:
+    return gui_status()
 
 
 def _installed_wrapper_stale() -> list[str]:
@@ -1445,6 +1460,30 @@ def ensure_admin_windows() -> None:
     raise SystemExit(0)
 
 
+def ensure_linux_root() -> None:
+    if IS_WINDOWS:
+        return
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        return
+    if getattr(sys, "frozen", False):
+        argv = [sys.executable, *sys.argv[1:]]
+    else:
+        argv = [sys.executable, "-m", "untrace", *sys.argv[1:]]
+    for launcher in ("pkexec", "sudo"):
+        try:
+            raise SystemExit(subprocess.call([launcher, *argv]))
+        except FileNotFoundError:
+            continue
+    raise SystemExit("Root privileges are required. Re-run with sudo.")
+
+
+def ensure_privileges() -> None:
+    if IS_WINDOWS:
+        ensure_admin_windows()
+    else:
+        ensure_linux_root()
+
+
 def find_chrome_windows():
     try:
         import winreg
@@ -1849,17 +1888,30 @@ def status():
 
 
 def pack_extension(*, output: str | None = None, version: str | None = None) -> Path:
-    from untrace import applog
+    from untrace.version import __version__, extension_zip_name
 
-    out = Path(output) if output else applog.log_dir() / "untrace-injector.zip"
+    root = Path(__file__).resolve().parent.parent
+    ver = version or __version__
+    out = Path(output) if output else root / "dist" / extension_zip_name(ver)
     path = injector.pack_extension_zip(
         out,
         list(DEFAULT_CHROME_SCRIPTS),
         CHROME_SCRIPTS,
-        version=version,
+        version=ver,
     )
     print(path)
     return path
+
+
+def build_dist(*, output: str | None = None, version: str | None = None) -> int:
+    root = Path(__file__).resolve().parent.parent
+    script = root / "scripts" / "build.py"
+    cmd = [sys.executable, str(script)]
+    if output:
+        cmd.extend(["--output", str(output)])
+    if version:
+        cmd.extend(["--version", version])
+    return subprocess.call(cmd, cwd=str(root))
 
 
 def main():
@@ -1869,6 +1921,7 @@ def main():
         epilog=(
             "Examples:\n"
             "  sudo python3 -m untrace --install --stealth --flags --chromedriver\n"
+            "  python -m untrace --build\n"
             "  python -m untrace --pack-extension\n"
             "  pytest tests/test_chromedriver.py"
         ),
@@ -1880,12 +1933,20 @@ def main():
     group.add_argument(
         "--gui",
         action="store_true",
-        help="open the Windows install/uninstall GUI",
+        help="open the install/uninstall GUI",
     )
     group.add_argument(
         "--pack-extension",
         action="store_true",
-        help="build a Chrome Web Store zip (no private key in manifest)",
+        help="pack Chrome Web Store zip -> dist/untrace-injector-vX.Y.Z.zip",
+    )
+    group.add_argument(
+        "--build",
+        action="store_true",
+        help=(
+            "build dist artifacts: Untrace binary + extension zip "
+            "(Windows .exe / Linux binary)"
+        ),
     )
     toggles = parser.add_argument_group("features (used with --install)")
     toggles.add_argument(
@@ -1906,16 +1967,16 @@ def main():
         action="store_true",
         help="patch chromedriver binaries (neutralize CDC injection)",
     )
-    pack_opts = parser.add_argument_group("pack-extension")
+    pack_opts = parser.add_argument_group("build / pack-extension")
     pack_opts.add_argument(
         "--output",
         metavar="PATH",
-        help="zip output path (default: Documents/Untrace/untrace-injector.zip)",
+        help="zip output path (default: dist/untrace-injector-vX.Y.Z.zip)",
     )
     pack_opts.add_argument(
         "--version",
         metavar="VER",
-        help="manifest version for --pack-extension (default: auto timestamp)",
+        help="manifest version (default: package __version__)",
     )
 
     args = parser.parse_args()
@@ -1934,12 +1995,11 @@ def main():
         uninstall()
     elif args.status:
         status()
+    elif args.build:
+        raise SystemExit(build_dist(output=args.output, version=args.version))
     elif args.pack_extension:
         pack_extension(output=args.output, version=args.version)
     elif args.gui:
-        if not IS_WINDOWS:
-            print("Error: --gui is Windows-only.", file=sys.stderr)
-            sys.exit(1)
         from untrace.gui_windows import main as gui_main
 
         gui_main()

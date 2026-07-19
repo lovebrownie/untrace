@@ -1528,10 +1528,12 @@ class UntraceGui(tk.Tk):
 
 def main() -> None:
     from untrace import applog
-    from untrace.__main__ import ensure_privileges
+    from untrace.__main__ import ensure_privileges, hide_windows_console
 
     applog.enable(command="--gui")
-    ensure_privileges()
+    hide_windows_console()
+    ensure_privileges(show_console=False)
+    hide_windows_console()
     _ensure_linux_desktop_icon()
     app = UntraceGui()
     app.mainloop()

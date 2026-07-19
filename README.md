@@ -110,7 +110,7 @@ The Linux `.deb` / Windows Setup install:
 - Desktop / Start Menu launcher + icon
 - License / docs bundled with the install
 
-The GUI asks for elevated privileges on launch (UAC on Windows, pkexec/sudo on Linux). Window title is `untrace vX.Y.Z`. Primary action is **Install** when nothing is present, **Update** when Untrace is already installed. Logs append to `Documents/Untrace/untrace.log`.
+The GUI asks for elevated privileges on launch (UAC on Windows, pkexec/sudo on Linux). On Windows the console host is detached so only the app window appears (CLI still uses a normal console). Window title is `untrace vX.Y.Z`. Primary action is **Install** when nothing is present, **Update** when Untrace is already installed. Logs append to `Documents/Untrace/untrace.log`.
 
 Pack a Chrome Web Store upload zip (no `key` in manifest):
 
@@ -127,8 +127,8 @@ Windows uses the **flags / Chrome wrapper** plus optional **Web Store stealth**.
 | Topic | Behavior |
 |-------|----------|
 | **Stealth** | `ExtensionInstallForcelist` with the Chrome Web Store update URL only (non-enterprise Chrome blocks local/`http://` hosts — `[BLOCKED]` in `chrome://policy`). Install warms `%PROGRAMDATA%\Untrace\chrome_profile_template` once so force-install can write `Secure Preferences` (`location: 7`). That warmup starts Chrome **minimized / off-screen**, then **kills all `chrome_real.exe` / `chrome.exe` processes**. The wrapper **copies** the template into each session profile before launch (no DevTools delay for Selenium). |
-| **GUI** | `python -m untrace --gui` (or `poetry run task gui`). Elevates via UAC. Shows **Install** or **Update**, status cards, in-app confirmations. Writes `Documents/Untrace/untrace.log`. |
-| **Build** | `python -m untrace --build` → `dist/Untrace-vX.Y.Z-Setup.exe` + extension zip. Requires [Inno Setup 6](https://jrsoftware.org/isinfo.php) (`ISCC.exe`) on the build machine. |
+| **GUI** | `python -m untrace --gui` (or `poetry run task gui`). Elevates via UAC; hides the PyInstaller console so only the Tk window shows. Shows **Install** or **Update**, status cards, in-app confirmations. Writes `Documents/Untrace/untrace.log`. |
+| **Build** | `python -m untrace --build` → `dist/Untrace-vX.Y.Z-Setup.exe` + `dist/Untrace-vX.Y.Z.exe` (portable) + extension zip. Requires [Inno Setup 6](https://jrsoftware.org/isinfo.php) (`ISCC.exe`) — `winget install JRSoftware.InnoSetup` or `choco install innosetup`. |
 | **Profiles** | Manual (`--flags`) and Selenium both use `%TEMP%\chrome_random_profiles\profile_*`. Chromedriver’s temp `scoped_dir` is a **junction** into that tree so `DevToolsActivePort` still resolves. |
 | **Chrome wrapper** | `chrome.exe` → C# wrapper; real browser → `chrome_real.exe`. Strips chromedriver junk, applies launcher flags, **waits** for Chrome (no `exec`). Tracks `chrome_real` in a Job Object (`KILL_ON_JOB_CLOSE`) so `driver.quit()` also tears down Chrome children. |
 | **`--enable-automation`** | **Kept** in the wrapper **and** in the chromedriver binary patch — Chrome exits under `--remote-debugging-port` without it |
@@ -276,6 +276,6 @@ python -m untrace --build     # same as task build
 pytest
 ```
 
-Windows installer builds need [Inno Setup 6](https://jrsoftware.org/isinfo.php) (`ISCC.exe` on `PATH`, or the default install location). Linux `.deb` builds need `dpkg-deb`.
+Windows installer builds need [Inno Setup 6](https://jrsoftware.org/isinfo.php) (`ISCC.exe` on `PATH`, or the default install location). Install with `winget install JRSoftware.InnoSetup` or `choco install innosetup`. Linux `.deb` builds need `dpkg-deb`.
 
 CI (`.github/workflows/ci.yml`) runs lint + unit tests on Ubuntu and Windows (`fail-fast`: one failure cancels the other test job). Build only starts after every test job succeeds, then uploads `dist/` artifacts named `untrace-<OS>-vX.Y.Z`.

@@ -32,8 +32,6 @@ untrace --status
 untrace --gui
 ```
 
-First GUI open prompts to install stealth/flags/chromedriver if they are not active yet.
-
 Remove the package (does not undo Chrome patches — run Uninstall in the GUI or `sudo untrace --uninstall` first):
 
 ```bash

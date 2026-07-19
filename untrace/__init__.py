@@ -4,6 +4,7 @@ from untrace.version import (
     gui_artifact_name,
     gui_exe_name,
     version_tag,
+    windows_zip_name,
 )
 
 __all__ = [
@@ -12,4 +13,5 @@ __all__ = [
     "gui_exe_name",
     "gui_artifact_name",
     "extension_zip_name",
+    "windows_zip_name",
 ]

@@ -40,7 +40,7 @@ def version_tag(version: str | None = None) -> str:
 
 
 def gui_exe_name(version: str | None = None) -> str:
-    return f"Untrace-{version_tag(version)}"
+    return f"Untrace-{version_tag(version)}-Portable"
 
 
 def gui_artifact_name(version: str | None = None) -> str:
@@ -54,3 +54,7 @@ def gui_artifact_name(version: str | None = None) -> str:
 
 def extension_zip_name(version: str | None = None) -> str:
     return f"untrace-injector-{version_tag(version)}.zip"
+
+
+def windows_zip_name(version: str | None = None) -> str:
+    return f"Untrace-{version_tag(version)}-Windows.zip"

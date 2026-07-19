@@ -1,6 +1,6 @@
 ; Untrace Windows installer — compiled by ISCC from scripts/build.py
 ; Defines passed on the command line:
-;   MyAppVersion, SourceExe, RepoRoot, OutputDir
+;   MyAppVersion, SourceExe, RepoRoot, OutputDir, VcRedist, InnoSetupInstaller
 
 #ifndef MyAppVersion
   #define MyAppVersion "0.1.0"
@@ -14,10 +14,18 @@
 #ifndef OutputDir
   #define OutputDir "dist"
 #endif
+#ifndef VcRedist
+  #define VcRedist "VC_redist.x64.exe"
+#endif
+#ifndef InnoSetupInstaller
+  #define InnoSetupInstaller "innosetup-6.7.3.exe"
+#endif
 
 #define MyAppName "Untrace"
 #define MyAppPublisher "carlos"
 #define MyAppExeName "untrace.exe"
+#define VcRedistFile ExtractFileName(VcRedist)
+#define InnoSetupFile ExtractFileName(InnoSetupInstaller)
 
 [Setup]
 AppId={{A7E8C3D1-9B2F-4E6A-8D1C-5F0B3A9E7C24}
@@ -52,14 +60,15 @@ VersionInfoProductVersion={#MyAppVersion}
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
-Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 Name: "addpath"; Description: "Add Untrace to the system PATH"; GroupDescription: "Environment:"; Flags: checkedonce
+Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 
 [Files]
 Source: "{#SourceExe}"; DestDir: "{app}"; DestName: "{#MyAppExeName}"; Flags: ignoreversion
 Source: "{#RepoRoot}\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#RepoRoot}\README.md"; DestDir: "{app}"; Flags: ignoreversion isreadme
 Source: "{#RepoRoot}\assets\icon.ico"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#VcRedist}"; DestDir: "{tmp}"; Flags: dontcopy
+Source: "{#InnoSetupInstaller}"; DestDir: "{tmp}"; Flags: dontcopy
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Parameters: "--gui"; Comment: "Untrace install manager"
@@ -75,6 +84,11 @@ Root: HKLM; Subkey: "SYSTEM\CurrentControlSet\Control\Session Manager\Environmen
 Filename: "{app}\{#MyAppExeName}"; Parameters: "--gui"; Description: "Launch Untrace"; Flags: nowait postinstall skipifsilent shellexec
 
 [Code]
+procedure InitializeWizard;
+begin
+  WizardSelectTasks('addpath');
+end;
+
 function NeedsAddPath(Param: string): Boolean;
 var
   OrigPath: string;
@@ -87,4 +101,81 @@ begin
     exit;
   end;
   Result := Pos(';' + UpperCase(Param) + ';', ';' + UpperCase(OrigPath) + ';') = 0;
+end;
+
+procedure SetStatus(const Msg: string);
+begin
+  if WizardForm <> nil then
+    WizardForm.StatusLabel.Caption := Msg;
+end;
+
+function VCRedistInstalled: Boolean;
+var
+  Installed: Cardinal;
+begin
+  Result :=
+    RegQueryDWordValue(HKEY_LOCAL_MACHINE,
+      'SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\X64',
+      'Installed', Installed) and (Installed = 1);
+end;
+
+function InnoSetupInstalled: Boolean;
+begin
+  Result :=
+    FileExists(ExpandConstant('{pf32}\Inno Setup 6\ISCC.exe')) or
+    FileExists(ExpandConstant('{pf}\Inno Setup 6\ISCC.exe')) or
+    FileExists(ExpandConstant('{localappdata}\Programs\Inno Setup 6\ISCC.exe'));
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  ResultCode: Integer;
+begin
+  Result := '';
+  NeedsRestart := False;
+
+  ExtractTemporaryFile('{#VcRedistFile}');
+  ExtractTemporaryFile('{#InnoSetupFile}');
+
+  if not VCRedistInstalled then
+  begin
+    SetStatus('Installing Visual C++ Redistributable...');
+    if not Exec(
+      ExpandConstant('{tmp}\{#VcRedistFile}'),
+      '/install /quiet /norestart',
+      '', SW_HIDE, ewWaitUntilTerminated, ResultCode
+    ) then
+    begin
+      Result := 'Failed to launch Visual C++ Redistributable.';
+      exit;
+    end;
+    if (ResultCode <> 0) and (ResultCode <> 3010) then
+    begin
+      Result := 'Visual C++ Redistributable failed (exit ' + IntToStr(ResultCode) + ').';
+      exit;
+    end;
+    if ResultCode = 3010 then
+      NeedsRestart := True;
+  end;
+
+  if not InnoSetupInstalled then
+  begin
+    SetStatus('Installing Inno Setup 6...');
+    if not Exec(
+      ExpandConstant('{tmp}\{#InnoSetupFile}'),
+      '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-',
+      '', SW_HIDE, ewWaitUntilTerminated, ResultCode
+    ) then
+    begin
+      Result := 'Failed to launch Inno Setup installer.';
+      exit;
+    end;
+    if ResultCode <> 0 then
+    begin
+      Result := 'Inno Setup installer failed (exit ' + IntToStr(ResultCode) + ').';
+      exit;
+    end;
+  end;
+
+  SetStatus('Installing Untrace...');
 end;

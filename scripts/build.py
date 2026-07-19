@@ -26,6 +26,7 @@ from untrace.version import (
     extension_zip_name,
     gui_artifact_name,
     gui_exe_name,
+    windows_zip_name,
 )
 
 
@@ -275,6 +276,9 @@ def _pack_windows_setup(binary: Path, *, version: str) -> Path:
             "Install from https://jrsoftware.org/isinfo.php or: choco install innosetup"
         )
 
+    vc = _fetch_vc_redist()
+    inno = _fetch_innosetup_installer()
+
     ver = version.lstrip("vV")
     iss = ROOT / "scripts" / "windows" / "untrace.iss"
     if not iss.is_file():
@@ -292,6 +296,8 @@ def _pack_windows_setup(binary: Path, *, version: str) -> Path:
         f"/DSourceExe={binary.resolve()}",
         f"/DRepoRoot={ROOT.resolve()}",
         f"/DOutputDir={DIST.resolve()}",
+        f"/DVcRedist={vc.resolve()}",
+        f"/DInnoSetupInstaller={inno.resolve()}",
         str(iss.resolve()),
     ]
     code = subprocess.call(cmd)
@@ -302,6 +308,119 @@ def _pack_windows_setup(binary: Path, *, version: str) -> Path:
     print(f"setup: {out}")
     print(f"install with: {out.name}")
     return out
+
+
+def _download_file(url: str, dest: Path) -> Path:
+    import urllib.error
+    import urllib.request
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.is_file() and dest.stat().st_size > 0:
+        return dest
+    partial = dest.with_suffix(dest.suffix + ".partial")
+    print(f"download: {url}")
+    try:
+        with urllib.request.urlopen(url, timeout=120) as resp, partial.open("wb") as out:
+            shutil.copyfileobj(resp, out)
+    except (urllib.error.URLError, OSError) as exc:
+        if partial.exists():
+            partial.unlink()
+        raise RuntimeError(f"download failed ({url}): {exc}") from exc
+    partial.replace(dest)
+    return dest
+
+
+def _windows_prereq_dir() -> Path:
+    return BUILD / "windows-prereqs"
+
+
+def _fetch_vc_redist() -> Path:
+    return _download_file(
+        "https://aka.ms/vs/17/release/vc_redist.x64.exe",
+        _windows_prereq_dir() / "VC_redist.x64.exe",
+    )
+
+
+def _fetch_innosetup_installer() -> Path:
+    return _download_file(
+        "https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe",
+        _windows_prereq_dir() / "innosetup-6.7.3.exe",
+    )
+
+
+def _windows_instructions(*, setup_name: str, portable_name: str) -> str:
+    return "\n".join(
+        [
+            "Untrace for Windows",
+            "===================",
+            "",
+            "Files in this zip",
+            "-----------------",
+            f"  {setup_name}     — installer (auto-installs VC++ + Inno Setup 6, then Untrace)",
+            f"  {portable_name}  — portable Untrace (no install; run as Admin)",
+            "  INSTRUCTIONS.txt — this file",
+            "",
+            "Install Untrace (recommended)",
+            "-----------------------------",
+            "1. Extract this zip to a folder.",
+            f"2. Right-click {setup_name} → Run as administrator.",
+            "3. Setup silently installs Visual C++ Redistributable and Inno Setup 6",
+            "   if they are missing, then installs Untrace.",
+            "4. Open Untrace from the Start Menu, or run: untrace",
+            "",
+            f"Fallback: run {portable_name} as Administrator, then Install in the GUI.",
+            "",
+            "If Windows blocks the Setup",
+            "---------------------------",
+            "• SmartScreen: More info → Run anyway.",
+            "• Smart App Control / WDAC: may block unsigned Setup and the Chrome wrapper.",
+            "  Turn Smart App Control off (or Evaluation), then retry.",
+            "",
+            "After Untrace is installed",
+            "--------------------------",
+            "  untrace              — opens the GUI",
+            "  untrace --status",
+            "  untrace --install --stealth --flags --chromedriver",
+            "  untrace --uninstall",
+            "",
+            "Logs: Documents\\Untrace\\untrace.log",
+            "",
+        ]
+    )
+
+
+def _pack_windows_zip(
+    *,
+    setup: Path,
+    portable: Path,
+    version: str,
+) -> Path:
+    import zipfile
+
+    if not setup.is_file():
+        raise FileNotFoundError(setup)
+    if not portable.is_file():
+        raise FileNotFoundError(portable)
+
+    ver = version.lstrip("vV")
+    setup_name = setup.name
+    portable_name = portable.name
+    zip_path = DIST / windows_zip_name(ver)
+    if zip_path.exists():
+        zip_path.unlink()
+
+    instructions = _windows_instructions(
+        setup_name=setup_name,
+        portable_name=portable_name,
+    )
+
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.write(setup, arcname=setup_name)
+        zf.write(portable, arcname=portable_name)
+        zf.writestr("INSTRUCTIONS.txt", instructions)
+
+    print(f"windows zip: {zip_path}")
+    return zip_path
 
 
 def build_gui(*, version: str | None = None) -> int:
@@ -363,7 +482,8 @@ def build_gui(*, version: str | None = None) -> int:
         shutil.copy2(binary, portable)
         print(f"portable: {portable}")
         try:
-            _pack_windows_setup(binary, version=ver)
+            setup = _pack_windows_setup(binary, version=ver)
+            _pack_windows_zip(setup=setup, portable=portable, version=ver)
         except Exception as exc:
             print(f"setup pack failed: {exc}", file=sys.stderr)
             print(

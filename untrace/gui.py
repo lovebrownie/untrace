@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import math
+import os
 import random
+import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -29,6 +32,8 @@ BTN_HOVER = "#12301c"
 BTN_DISABLED = "#06100a"
 TEXT_DISABLED = "#2a4a32"
 FONT = "Consolas"
+APP_ID = "untrace"
+WM_CLASS = "Untrace"
 
 
 def _assets_dir() -> Path:
@@ -40,6 +45,121 @@ def _assets_dir() -> Path:
 ASSETS_DIR = _assets_dir()
 ICON_PNG = ASSETS_DIR / "icon.png"
 ICON_ICO = ASSETS_DIR / "icon.ico"
+
+
+def _linux_invoking_pw():
+    if sys.platform == "win32":
+        return None
+    try:
+        import pwd
+    except ImportError:
+        return None
+    sudo_user = os.environ.get("SUDO_USER")
+    if sudo_user:
+        try:
+            return pwd.getpwnam(sudo_user)
+        except KeyError:
+            pass
+    pkexec_uid = os.environ.get("PKEXEC_UID")
+    if pkexec_uid and pkexec_uid.isdigit():
+        try:
+            return pwd.getpwuid(int(pkexec_uid))
+        except KeyError:
+            pass
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        return None
+    try:
+        return pwd.getpwuid(os.getuid())
+    except KeyError:
+        return None
+
+
+def _chown_to_invoker(path: Path) -> None:
+    pw = _linux_invoking_pw()
+    if pw is None or not hasattr(os, "geteuid") or os.geteuid() != 0:
+        return
+    targets = [path]
+    if path.is_dir():
+        targets.extend(path.rglob("*"))
+    for item in targets:
+        try:
+            os.chown(item, pw.pw_uid, pw.pw_gid)
+        except OSError:
+            pass
+
+
+def _ensure_linux_desktop_icon() -> None:
+    if sys.platform == "win32":
+        return
+    pw = _linux_invoking_pw()
+    if pw is None:
+        return
+    home = Path(pw.pw_dir)
+    icon_sources = [
+        (ASSETS_DIR / "icon-128.png", "128x128"),
+        (ICON_PNG, "128x128"),
+        (ASSETS_DIR / "icon-48.png", "48x48"),
+        (ASSETS_DIR / "icon-16.png", "16x16"),
+    ]
+    installed = False
+    icons_root = home / ".local" / "share" / "icons" / "hicolor"
+    seen_sizes: set[str] = set()
+    for src, size in icon_sources:
+        if size in seen_sizes or not src.is_file():
+            continue
+        dest_dir = icons_root / size / "apps"
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / f"{APP_ID}.png"
+        shutil.copy2(src, dest)
+        _chown_to_invoker(dest_dir)
+        seen_sizes.add(size)
+        installed = True
+    if not installed:
+        return
+
+    apps_dir = home / ".local" / "share" / "applications"
+    apps_dir.mkdir(parents=True, exist_ok=True)
+    if getattr(sys, "frozen", False):
+        exec_line = f'"{os.environ.get("APPIMAGE") or sys.executable}"'
+    else:
+        exec_line = f'"{sys.executable}" -m untrace --gui'
+    icon_value = APP_ID
+    preferred = icons_root / "128x128" / "apps" / f"{APP_ID}.png"
+    if preferred.is_file():
+        icon_value = str(preferred.resolve())
+    desktop = apps_dir / f"{APP_ID}.desktop"
+    desktop.write_text(
+        "\n".join(
+            [
+                "[Desktop Entry]",
+                "Type=Application",
+                "Name=Untrace",
+                "Comment=Untrace install manager",
+                f"Exec={exec_line}",
+                f"Icon={icon_value}",
+                "Terminal=false",
+                "Categories=Utility;System;",
+                f"StartupWMClass={WM_CLASS}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    try:
+        desktop.chmod(desktop.stat().st_mode | 0o111)
+    except OSError:
+        pass
+    _chown_to_invoker(apps_dir)
+
+    with open(os.devnull, "w") as devnull:
+        for cmd in (
+            ["update-desktop-database", str(apps_dir)],
+            ["gtk-update-icon-cache", "-f", "-t", str(icons_root)],
+        ):
+            try:
+                subprocess.call(cmd, stdout=devnull, stderr=devnull)
+            except OSError:
+                pass
 
 
 def _fetch_status() -> dict:
@@ -884,12 +1004,18 @@ class TerminalScrollbar(tk.Canvas):
 
 class UntraceGui(tk.Tk):
     def __init__(self) -> None:
-        super().__init__()
+        super().__init__(className=WM_CLASS)
         self.title(f"untrace {version_tag()}")
         self.minsize(540, 480)
         self.configure(bg=GREEN)
         self.geometry("960x700")
-        self.state("zoomed")
+        try:
+            if sys.platform == "win32":
+                self.state("zoomed")
+            else:
+                self.attributes("-zoomed", True)
+        except tk.TclError:
+            pass
         self._busy = False
         self._refreshing = False
         self._loading: LoadingOverlay | None = None
@@ -900,6 +1026,7 @@ class UntraceGui(tk.Tk):
         self._resizing = False
         self._resize_job: str | None = None
         self._last_size = (0, 0)
+        self._asked_install = False
         self._apply_window_icon()
 
         border = tk.Frame(self, bg=GREEN, padx=1, pady=1)
@@ -1077,17 +1204,35 @@ class UntraceGui(tk.Tk):
         return self._keep_image(image)
 
     def _apply_window_icon(self) -> None:
-        if ICON_ICO.is_file():
+        if sys.platform == "win32" and ICON_ICO.is_file():
             try:
                 self.iconbitmap(default=str(ICON_ICO.resolve()))
             except tk.TclError:
                 pass
-        photo = self._load_photo(ICON_PNG) or self._load_photo(
-            ASSETS_DIR / "icon-128.png"
-        )
-        if photo is not None:
+        photos: list[tk.PhotoImage] = []
+        seen: set[str] = set()
+        for path in (
+            ASSETS_DIR / "icon-128.png",
+            ICON_PNG,
+            ASSETS_DIR / "icon-48.png",
+            ASSETS_DIR / "icon-16.png",
+        ):
+            if not path.is_file():
+                continue
+            key = str(path.resolve())
+            if key in seen:
+                continue
+            seen.add(key)
+            photo = self._load_photo(path)
+            if photo is not None:
+                photos.append(photo)
+        if not photos:
+            return
+        try:
+            self.iconphoto(True, *photos)
+        except tk.TclError:
             try:
-                self.iconphoto(True, photo)
+                self.iconphoto(True, photos[0])
             except tk.TclError:
                 pass
 
@@ -1283,6 +1428,20 @@ class UntraceGui(tk.Tk):
         self._finish_ui_busy()
         if callback is not None:
             callback()
+        self._maybe_prompt_install(snapshot)
+
+    def _maybe_prompt_install(self, snapshot: dict) -> None:
+        if self._asked_install or self._busy:
+            return
+        if snapshot.get("installed") or not snapshot.get("can_install"):
+            return
+        self._asked_install = True
+        ask_confirm(
+            self,
+            "install",
+            "Untrace is not installed yet.\nInstall stealth, flags, and chromedriver now?",
+            lambda ok: self._run("install") if ok else None,
+        )
 
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy
@@ -1373,6 +1532,7 @@ def main() -> None:
 
     applog.enable(command="--gui")
     ensure_privileges()
+    _ensure_linux_desktop_icon()
     app = UntraceGui()
     app.mainloop()
 

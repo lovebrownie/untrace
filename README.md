@@ -21,16 +21,31 @@ Bare `--install` (no flags) enables all three feature flags (`--stealth`, `--fla
 
 ### Linux
 
-**Install** (needs root). Re-run the same command to update:
+**Option A — `.deb` (GUI + `untrace` on `PATH`)**
+
+```bash
+poetry run task build-gui   # or: python -m untrace --build
+sudo apt install ./dist/untrace_0.1.0_amd64.deb
+
+untrace              # opens the GUI (on PATH)
+untrace --status
+untrace --gui
+```
+
+First GUI open prompts to install stealth/flags/chromedriver if they are not active yet.
+
+Remove the package (does not undo Chrome patches — run Uninstall in the GUI or `sudo untrace --uninstall` first):
+
+```bash
+sudo apt remove untrace
+```
+
+**Option B — from source (needs root)**
 
 ```bash
 sudo python3 -m untrace --install --stealth --flags --chromedriver
-```
-
-**Status** (shows what is actually active):
-
-```bash
 python3 -m untrace --status
+sudo python3 -m untrace --uninstall
 ```
 
 ```
@@ -43,15 +58,23 @@ OK Chromedriver patch
 OK Selenium-manager patch
 ```
 
-**Uninstall** — removes everything: restores system Chrome, deletes `/etc/untrace` and `~/.local/share/untrace` (via `SUDO_USER`), unpatches chromedrivers:
-
-```bash
-sudo python3 -m untrace --uninstall
-```
+`--uninstall` restores system Chrome, deletes `/etc/untrace` and `~/.local/share/untrace` (via `SUDO_USER`), and unpatches chromedrivers / selenium-manager.
 
 ### Windows
 
-CLI (Admin) or GUI. Install/uninstall closes Chrome automatically:
+**Option A — Setup installer (GUI + `untrace` on PATH)**
+
+```powershell
+poetry run task build-gui
+# run dist\Untrace-v0.1.0-Setup.exe (Admin)
+untrace              # GUI
+untrace --status
+untrace --gui
+```
+
+Uninstall from Windows Settings → Apps, or Start Menu → Untrace → Uninstall. That removes the app from PATH; run Uninstall in the GUI (or `untrace --uninstall`) first if you also want Chrome patches removed.
+
+**Option B — from source (Admin)**
 
 ```powershell
 python -m untrace --install --stealth --flags --chromedriver
@@ -62,37 +85,46 @@ python -m untrace --gui
 # or: poetry run task gui
 ```
 
-Pack a Chrome Web Store upload zip (no `key` in manifest). The zip includes transparent icons (`icons/icon-16.png`, `48`, `128`) and sets `manifest.icons` + `action.default_icon`:
-
-```powershell
-python -m untrace --pack-extension
-# or: poetry run task pack-extension
-```
-
-Default output: `dist/untrace-injector-v0.1.0.zip` (version from `pyproject.toml`).
-
-Build the GUI binary and the extension zip into `dist/`:
+## Build artifacts
 
 ```bash
 python -m untrace --build
 # or: poetry run task build
 ```
 
-Writes `dist/Untrace-v0.1.0.exe` (Windows) or `dist/Untrace-v0.1.0` (Linux), plus `dist/untrace-injector-v0.1.0.zip`. GUI-only: `poetry run task build-gui`.
+| Platform | Artifact |
+|----------|----------|
+| Windows | `dist/Untrace-v0.1.0-Setup.exe` (Inno Setup) |
+| Linux | `dist/untrace_0.1.0_amd64.deb` |
+| Both | `dist/untrace-injector-v0.1.0.zip` (extension; version from `pyproject.toml`) |
+
+GUI-only: `poetry run task build-gui`. Extension only: `poetry run task pack-extension`.
+
+The Linux `.deb` / Windows Setup install:
+
+- `untrace` on `PATH` (CLI + GUI)
+- Desktop / Start Menu launcher + icon
+- License / docs bundled with the install
 
 The GUI asks for elevated privileges on launch (UAC on Windows, pkexec/sudo on Linux). Window title is `untrace vX.Y.Z`. Primary action is **Install** when nothing is present, **Update** when Untrace is already installed. Logs append to `Documents/Untrace/untrace.log`.
 
+Pack a Chrome Web Store upload zip (no `key` in manifest):
+
+```bash
+python -m untrace --pack-extension
+```
+
 `--deploy` is not supported on Windows yet. `--stealth` force-installs [Untrace Injector](https://chromewebstore.google.com/detail/untrace-injector/mgnlenokophofdnmlabkgpmlnolgomgj) from the Chrome Web Store (Admin for policy keys) and warms `%PROGRAMDATA%\Untrace\chrome_profile_template`. `--chromedriver` patches cached drivers (keep App Control off if the unsigned PE is blocked).
 
-## Windows
+## Windows notes
 
 Windows uses the **flags / Chrome wrapper** plus optional **Web Store stealth**. Differences from Linux:
 
 | Topic | Behavior |
 |-------|----------|
 | **Stealth** | `ExtensionInstallForcelist` with the Chrome Web Store update URL only (non-enterprise Chrome blocks local/`http://` hosts — `[BLOCKED]` in `chrome://policy`). Install warms `%PROGRAMDATA%\Untrace\chrome_profile_template` once so force-install can write `Secure Preferences` (`location: 7`). That warmup starts Chrome **minimized / off-screen**, then **kills all `chrome_real.exe` / `chrome.exe` processes**. The wrapper **copies** the template into each session profile before launch (no DevTools delay for Selenium). |
-| **GUI** | `python -m untrace --gui` (or `poetry run task gui`). Elevates via UAC (Windows) or pkexec/sudo (Linux). Window title is `untrace vX.Y.Z`. Shows **Install** or **Update**, status cards, in-app confirmations. Writes `Documents/Untrace/untrace.log`. |
-| **Build** | `python -m untrace --build` → `dist/Untrace-vX.Y.Z` (+ `.exe` on Windows) and `dist/untrace-injector-vX.Y.Z.zip`. |
+| **GUI** | `python -m untrace --gui` (or `poetry run task gui`). Elevates via UAC. Shows **Install** or **Update**, status cards, in-app confirmations. Writes `Documents/Untrace/untrace.log`. |
+| **Build** | `python -m untrace --build` → `dist/Untrace-vX.Y.Z-Setup.exe` + extension zip. Requires [Inno Setup 6](https://jrsoftware.org/isinfo.php) (`ISCC.exe`) on the build machine. |
 | **Profiles** | Manual (`--flags`) and Selenium both use `%TEMP%\chrome_random_profiles\profile_*`. Chromedriver’s temp `scoped_dir` is a **junction** into that tree so `DevToolsActivePort` still resolves. |
 | **Chrome wrapper** | `chrome.exe` → C# wrapper; real browser → `chrome_real.exe`. Strips chromedriver junk, applies launcher flags, **waits** for Chrome (no `exec`). Tracks `chrome_real` in a Job Object (`KILL_ON_JOB_CLOSE`) so `driver.quit()` also tears down Chrome children. |
 | **`--enable-automation`** | **Kept** in the wrapper **and** in the chromedriver binary patch — Chrome exits under `--remote-debugging-port` without it |
@@ -191,23 +223,28 @@ Optional (off by default): `iframe.contentWindow`, `navigator.plugins`, `navigat
 ## Project layout
 
 ```
+scripts/
+  build.py               Dist packer (PyInstaller + .deb / Inno Setup)
+  windows/untrace.iss    Windows installer script
 assets/
   icon.svg               Brand mark (transparent background)
   icon.png / icon-*.png  Raster icons (16 / 48 / 128) for the extension + GUI
-  icon.ico               GUI / PyInstaller icon
+  icon.ico               GUI / installer icon
 untrace/
   __init__.py            Exports __version__ (from pyproject.toml)
   version.py             Reads [project].version; artifact name helpers
   __main__.py            CLI, Chrome wrapper, script catalog
   injector.py            Extension build, icons → manifest, profile seeding
-  chromedriver_patch.py  CDC patch / unpatch with .untrace.bak
-  selenium_manager_patch.py  Patch selenium-manager to use the Chrome wrapper
+  chromedriver.py        CDC patch / unpatch with .untrace.bak
+  selenium.py            Patch selenium-manager to use the Chrome wrapper
   config.py              Persisted feature flags per root
-  gui_windows.py         Install/update GUI (Windows + Linux)
+  gui.py                 Install/update GUI (Windows + Linux)
   applog.py              Documents/Untrace/untrace.log tee
   js/                    Stealth injection sources
 tests/
   test_chromedriver.py   Browser integration tests
+  test_chromedriver_unit.py  Chromedriver CDC patch unit tests
+  test_selenium.py       Selenium-manager patch unit tests
   conftest.py            Bare Selenium fixture
 ```
 
@@ -228,11 +265,13 @@ poetry install
 poetry run task lint          # format + fix with Ruff
 poetry run task lint-check    # verify only (CI)
 poetry run task gui           # install/uninstall GUI (elevates)
-poetry run task build         # dist/Untrace-vX.Y.Z(+.exe) + extension zip
-poetry run task build-gui     # dist/Untrace-vX.Y.Z(+.exe) only
-poetry run task pack-extension  # dist/untrace-injector-vX.Y.Z.zip only
+poetry run task build         # Setup.exe / .deb + extension zip → dist/
+poetry run task build-gui     # installer artifact only
+poetry run task pack-extension  # extension zip only
 python -m untrace --build     # same as task build
 pytest
 ```
+
+Windows installer builds need [Inno Setup 6](https://jrsoftware.org/isinfo.php) (`ISCC.exe` on `PATH`, or the default install location). Linux `.deb` builds need `dpkg-deb`.
 
 CI (`.github/workflows/ci.yml`) runs lint + unit tests on Ubuntu and Windows (`fail-fast`: one failure cancels the other test job). Build only starts after every test job succeeds, then uploads `dist/` artifacts named `untrace-<OS>-vX.Y.Z`.

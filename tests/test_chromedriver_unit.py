@@ -2,7 +2,7 @@ import sys
 
 import pytest
 
-from untrace import chromedriver_patch
+from untrace import chromedriver
 
 
 def test_patch_chromedriver_binary_replaces_cdc_block(tmp_path):
@@ -14,17 +14,17 @@ def test_patch_chromedriver_binary_replaces_cdc_block(tmp_path):
     driver.write_bytes(original)
     driver.chmod(0o755)
 
-    assert chromedriver_patch.patch_chromedriver_binary(driver) is True
+    assert chromedriver.patch_chromedriver_binary(driver) is True
     patched = driver.read_bytes()
-    assert chromedriver_patch.PATCH_MARKER in patched
+    assert chromedriver.PATCH_MARKER in patched
     assert b"window.cdc_" not in patched
     assert b"test-type=webdriver" not in patched
     if sys.platform == "win32":
         assert b"enable-automation" in patched
     else:
         assert b"enable-automation" not in patched
-    assert chromedriver_patch.backup_path(driver).is_file()
-    assert chromedriver_patch.patch_chromedriver_binary(driver) is True
+    assert chromedriver.backup_path(driver).is_file()
+    assert chromedriver.patch_chromedriver_binary(driver) is True
 
 
 def test_patch_chromedriver_binary_returns_false_without_block(tmp_path):
@@ -32,7 +32,7 @@ def test_patch_chromedriver_binary_returns_false_without_block(tmp_path):
     driver.write_bytes(b"no injection here")
     driver.chmod(0o755)
 
-    assert chromedriver_patch.patch_chromedriver_binary(driver) is False
+    assert chromedriver.patch_chromedriver_binary(driver) is False
 
 
 def test_unpatch_chromedriver_binary_restores_backup(tmp_path):
@@ -44,15 +44,15 @@ def test_unpatch_chromedriver_binary_restores_backup(tmp_path):
     driver.write_bytes(original)
     driver.chmod(0o755)
 
-    chromedriver_patch.patch_chromedriver_binary(driver)
-    assert chromedriver_patch.unpatch_chromedriver_binary(driver) is True
+    chromedriver.patch_chromedriver_binary(driver)
+    assert chromedriver.unpatch_chromedriver_binary(driver) is True
     assert driver.read_bytes() == original
-    assert not chromedriver_patch.backup_path(driver).exists()
+    assert not chromedriver.backup_path(driver).exists()
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="Linux SUDO_USER home lookup")
 def test_unpatch_all_chromedrivers_uses_sudo_user_home(tmp_path, monkeypatch):
-    real_user_home = tmp_path / "carlos"
+    real_user_home = tmp_path / "testuser"
     root_home = tmp_path / "root"
     real_user_home.mkdir()
     root_home.mkdir()
@@ -64,16 +64,16 @@ def test_unpatch_all_chromedrivers_uses_sudo_user_home(tmp_path, monkeypatch):
     original = injection
     driver.write_bytes(original)
     driver.chmod(0o755)
-    chromedriver_patch.patch_chromedriver_binary(driver)
+    chromedriver.patch_chromedriver_binary(driver)
 
-    monkeypatch.setattr(chromedriver_patch.Path, "home", lambda: root_home)
-    monkeypatch.setenv("SUDO_USER", "carlos")
+    monkeypatch.setattr(chromedriver.Path, "home", lambda: root_home)
+    monkeypatch.setenv("SUDO_USER", "testuser")
     monkeypatch.setattr(
-        chromedriver_patch.pwd,
+        chromedriver.pwd,
         "getpwnam",
         lambda name: type("Pw", (), {"pw_dir": str(real_user_home)})(),
     )
 
-    unpatched = chromedriver_patch.unpatch_all_chromedrivers()
+    unpatched = chromedriver.unpatch_all_chromedrivers()
     assert driver in unpatched
     assert driver.read_bytes() == original

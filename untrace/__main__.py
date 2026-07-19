@@ -14,7 +14,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from untrace import chromedriver_patch, config, injector, selenium_manager_patch
+from untrace import chromedriver, config, injector, selenium
 
 IS_WINDOWS = platform.system() == "Windows"
 
@@ -585,9 +585,9 @@ def _chrome_wrapper_installed() -> bool:
 
 
 def _chromedriver_patch_active() -> bool:
-    for binary in chromedriver_patch.find_chromedriver_binaries():
+    for binary in chromedriver.find_chromedriver_binaries():
         try:
-            if chromedriver_patch.is_patched(binary.read_bytes()):
+            if chromedriver.is_patched(binary.read_bytes()):
                 return True
         except OSError:
             continue
@@ -595,24 +595,24 @@ def _chromedriver_patch_active() -> bool:
 
 
 def _selenium_manager_patch_active() -> bool:
-    return selenium_manager_patch.any_patched()
+    return selenium.any_patched()
 
 
 def _apply_chromedriver_patch(cfg: dict) -> None:
     if cfg.get("chromedriver_patch", True):
-        patched = chromedriver_patch.patch_all_chromedrivers()
+        patched = chromedriver.patch_all_chromedrivers()
         if patched:
             print(f"Patched {len(patched)} chromedriver binary(s).")
         if not IS_WINDOWS:
-            sm_patched = selenium_manager_patch.patch_all_selenium_managers()
+            sm_patched = selenium.patch_all_selenium_managers()
             if sm_patched:
                 print(f"Patched {len(sm_patched)} selenium-manager binary(s).")
     else:
-        unpatched = chromedriver_patch.unpatch_all_chromedrivers()
+        unpatched = chromedriver.unpatch_all_chromedrivers()
         if unpatched:
             print(f"Unpatched {len(unpatched)} chromedriver binary(s).")
         if not IS_WINDOWS:
-            sm_unpatched = selenium_manager_patch.unpatch_all_selenium_managers()
+            sm_unpatched = selenium.unpatch_all_selenium_managers()
             if sm_unpatched:
                 print(f"Unpatched {len(sm_unpatched)} selenium-manager binary(s).")
 
@@ -857,10 +857,10 @@ def uninstall_linux():
         paths = ", ".join(str(root) for root in removed_deploys)
         print(f"Removed user deploy: {paths}")
 
-    unpatched_drivers = chromedriver_patch.unpatch_all_chromedrivers()
+    unpatched_drivers = chromedriver.unpatch_all_chromedrivers()
     if unpatched_drivers:
         print(f"Unpatched {len(unpatched_drivers)} chromedriver(s).")
-    unpatched_managers = selenium_manager_patch.unpatch_all_selenium_managers()
+    unpatched_managers = selenium.unpatch_all_selenium_managers()
     if unpatched_managers:
         print(f"Unpatched {len(unpatched_managers)} selenium-manager(s).")
     print("Uninstalled.")
@@ -1460,18 +1460,93 @@ def ensure_admin_windows() -> None:
     raise SystemExit(0)
 
 
+def _linux_invoking_pw():
+    if pwd is None:
+        return None
+    sudo_user = os.environ.get("SUDO_USER")
+    if sudo_user:
+        try:
+            return pwd.getpwnam(sudo_user)
+        except KeyError:
+            pass
+    pkexec_uid = os.environ.get("PKEXEC_UID")
+    if pkexec_uid and pkexec_uid.isdigit():
+        try:
+            return pwd.getpwuid(int(pkexec_uid))
+        except KeyError:
+            pass
+    return None
+
+
+def _linux_display_env() -> dict[str, str]:
+    env: dict[str, str] = {}
+    for key in ("DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY", "XDG_RUNTIME_DIR"):
+        val = os.environ.get(key)
+        if val:
+            env[key] = val
+    if "DISPLAY" in env and "XAUTHORITY" not in env:
+        home = os.environ.get("HOME")
+        if home:
+            xauth = Path(home) / ".Xauthority"
+            if xauth.is_file():
+                env["XAUTHORITY"] = str(xauth)
+    return env
+
+
+def _linux_adopt_display_env() -> None:
+    pw = _linux_invoking_pw()
+    if pw is None:
+        return
+    runtime = Path(f"/run/user/{pw.pw_uid}")
+    if not os.environ.get("XAUTHORITY"):
+        xauth_candidates = [
+            Path(pw.pw_dir) / ".Xauthority",
+            runtime / "gdm" / "Xauthority",
+            runtime / "Xauthority",
+            *sorted(runtime.glob(".mutter-Xwaylandauth*")),
+        ]
+        for xauth in xauth_candidates:
+            if xauth.is_file():
+                os.environ["XAUTHORITY"] = str(xauth)
+                break
+    if not os.environ.get("DISPLAY"):
+        for display in (":0", ":1"):
+            if (Path("/tmp/.X11-unix") / f"X{display[1:]}").exists():
+                os.environ["DISPLAY"] = display
+                break
+    if not os.environ.get("WAYLAND_DISPLAY") and (runtime / "wayland-0").exists():
+        os.environ["WAYLAND_DISPLAY"] = "wayland-0"
+    if not os.environ.get("XDG_RUNTIME_DIR") and runtime.is_dir():
+        os.environ["XDG_RUNTIME_DIR"] = str(runtime)
+
+
 def ensure_linux_root() -> None:
     if IS_WINDOWS:
         return
     if hasattr(os, "geteuid") and os.geteuid() == 0:
+        _linux_adopt_display_env()
         return
     if getattr(sys, "frozen", False):
-        argv = [sys.executable, *sys.argv[1:]]
+        # AppImage FUSE mounts are not executable by root — elevate the .AppImage itself.
+        appimage = os.environ.get("APPIMAGE")
+        executable = (
+            appimage if appimage and os.path.isfile(appimage) else sys.executable
+        )
+        argv = [executable, *sys.argv[1:]]
     else:
         argv = [sys.executable, "-m", "untrace", *sys.argv[1:]]
+    display_env = _linux_display_env()
+    if os.environ.get("APPIMAGE"):
+        display_env.setdefault("APPIMAGE_EXTRACT_AND_RUN", "1")
+    env_assign = [f"{key}={value}" for key, value in display_env.items()]
     for launcher in ("pkexec", "sudo"):
         try:
-            raise SystemExit(subprocess.call([launcher, *argv]))
+            cmd = (
+                [launcher, "env", *env_assign, *argv]
+                if env_assign
+                else [launcher, *argv]
+            )
+            raise SystemExit(subprocess.call(cmd))
         except FileNotFoundError:
             continue
     raise SystemExit("Root privileges are required. Re-run with sudo.")
@@ -1868,7 +1943,7 @@ def uninstall_windows():
     if template.is_dir():
         shutil.rmtree(template, ignore_errors=True)
     config.clear()
-    unpatched_drivers = chromedriver_patch.unpatch_all_chromedrivers()
+    unpatched_drivers = chromedriver.unpatch_all_chromedrivers()
     if unpatched_drivers:
         print(f"Unpatched {len(unpatched_drivers)} chromedriver(s).")
     print("Uninstalled.")
@@ -1926,7 +2001,7 @@ def main():
             "  pytest tests/test_chromedriver.py"
         ),
     )
-    group = parser.add_mutually_exclusive_group(required=True)
+    group = parser.add_mutually_exclusive_group(required=False)
     group.add_argument("--install", action="store_true")
     group.add_argument("--uninstall", action="store_true")
     group.add_argument("--status", action="store_true")
@@ -1944,8 +2019,8 @@ def main():
         "--build",
         action="store_true",
         help=(
-            "build dist artifacts: Untrace binary + extension zip "
-            "(Windows .exe / Linux binary)"
+            "build dist artifacts: Untrace installer + extension zip "
+            "(Windows Setup.exe / Linux .deb)"
         ),
     )
     toggles = parser.add_argument_group("features (used with --install)")
@@ -1980,6 +2055,17 @@ def main():
     )
 
     args = parser.parse_args()
+    if not any(
+        (
+            args.install,
+            args.uninstall,
+            args.status,
+            args.gui,
+            args.pack_extension,
+            args.build,
+        )
+    ):
+        args.gui = True
     from untrace import applog
 
     cmd = " ".join(sys.argv[1:]) or "(no args)"
@@ -2000,7 +2086,7 @@ def main():
     elif args.pack_extension:
         pack_extension(output=args.output, version=args.version)
     elif args.gui:
-        from untrace.gui_windows import main as gui_main
+        from untrace.gui import main as gui_main
 
         gui_main()
 

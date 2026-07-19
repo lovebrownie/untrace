@@ -25,6 +25,7 @@ from untrace.version import (
     __version__,
     extension_zip_name,
     gui_artifact_name,
+    gui_exe_name,
 )
 
 
@@ -357,24 +358,33 @@ def build_gui(*, version: str | None = None) -> int:
         print(f"missing pyinstaller binary: {binary}", file=sys.stderr)
         return 1
 
-    try:
-        if sys.platform == "win32":
+    if sys.platform == "win32":
+        portable = DIST / f"{gui_exe_name(ver)}.exe"
+        shutil.copy2(binary, portable)
+        print(f"portable: {portable}")
+        try:
             _pack_windows_setup(binary, version=ver)
-        else:
-            _pack_linux_deb(binary, version=ver)
+        except Exception as exc:
+            print(f"setup pack failed: {exc}", file=sys.stderr)
+            print(
+                "hint: install Inno Setup 6, or use the portable exe in dist/",
+                file=sys.stderr,
+            )
+            return 1
+        return 0
+
+    try:
+        _pack_linux_deb(binary, version=ver)
     except Exception as exc:
-        kind = "setup" if sys.platform == "win32" else "deb"
-        print(f"{kind} pack failed: {exc}", file=sys.stderr)
+        print(f"deb pack failed: {exc}", file=sys.stderr)
         return 1
     return 0
 
 
 def build_all(*, output: str | None = None, version: str | None = None) -> int:
-    code = build_gui(version=version)
-    if code != 0:
-        return code
+    gui_code = build_gui(version=version)
     pack_extension(output=output, version=version)
-    return 0
+    return gui_code
 
 
 def main(argv: list[str] | None = None) -> int:

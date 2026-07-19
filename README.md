@@ -235,4 +235,4 @@ python -m untrace --build     # same as task build
 pytest
 ```
 
-CI (`.github/workflows/ci.yml`) runs lint + unit tests on Ubuntu and Windows, then builds `dist/` (GUI binary + extension zip) and uploads artifacts named `untrace-<OS>-vX.Y.Z`.
+CI (`.github/workflows/ci.yml`) runs lint + unit tests on Ubuntu and Windows (`fail-fast`: one failure cancels the other test job). Build only starts after every test job succeeds, then uploads `dist/` artifacts named `untrace-<OS>-vX.Y.Z`.

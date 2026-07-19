@@ -14,10 +14,10 @@ permissions:
 
 jobs:
   test:
-    name: ${{ matrix.os }}
+    name: Test ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
         os: [ubuntu-latest, windows-latest]
 
@@ -40,9 +40,25 @@ jobs:
       - name: Unit tests
         run: poetry run pytest --ignore=tests/test_chromedriver.py -q
 
+  tests-passed:
+    name: Tests passed
+    needs: test
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require all test jobs to succeed
+        run: |
+          result="${{ needs.test.result }}"
+          echo "test matrix result: ${result}"
+          if [ "${result}" != "success" ]; then
+            echo "Build blocked: one or more test jobs failed or were cancelled"
+            exit 1
+          fi
+
   build:
     name: Build ${{ matrix.os }}
-    needs: test
+    needs: tests-passed
+    if: success()
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false

@@ -10,6 +10,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -637,6 +638,52 @@ def build_manifest(
             }
         ],
     }
+
+
+def build_store_manifest(script_files: list[str], version: str = "1.0") -> dict:
+    manifest = build_manifest(script_files, "", version)
+    del manifest["key"]
+    return manifest
+
+
+def pack_extension_zip(
+    output: Path,
+    enabled_scripts: list[str],
+    script_catalog: dict[str, tuple[str, list | None]],
+    *,
+    version: str | None = None,
+) -> Path:
+    output = Path(output).expanduser().resolve()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    ver = version or _extension_version()
+
+    with tempfile.TemporaryDirectory(prefix="untrace-ext-") as tmp:
+        root = Path(tmp) / "extension"
+        js_dir = root / "js"
+        script_files = _deploy_stealth_scripts(
+            js_dir, enabled_scripts, script_catalog
+        )
+        custom_name = "custom.js"
+        custom_src = JS_SOURCE_DIR / custom_name
+        if custom_src.is_file():
+            shutil.copy2(custom_src, js_dir / custom_name)
+        else:
+            (js_dir / custom_name).write_text(DEFAULT_CUSTOM_JS)
+        script_files.append(f"js/{custom_name}")
+
+        manifest = build_store_manifest(script_files, ver)
+        (root / "manifest.json").write_text(
+            json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
+        )
+
+        if output.is_file():
+            output.unlink()
+        with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            for path in sorted(root.rglob("*")):
+                if path.is_file():
+                    zf.write(path, path.relative_to(root).as_posix())
+
+    return output
 
 
 def _deploy_stealth_scripts(

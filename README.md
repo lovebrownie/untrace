@@ -47,7 +47,7 @@ sudo python3 -m untrace --uninstall
 
 ### Windows
 
-Close Chrome first. CLI (Admin) or GUI:
+CLI (Admin) or GUI. Install/uninstall closes Chrome automatically:
 
 ```powershell
 python -m untrace --install --stealth --flags --chromedriver
@@ -55,12 +55,24 @@ python -m untrace --status
 python -m untrace --uninstall
 
 python -m untrace --gui
+# or: poetry run task gui
 ```
+
+Pack a Chrome Web Store upload zip (no `key` in manifest):
+
+```powershell
+python -m untrace --pack-extension
+# optional: --output path\to\untrace-injector.zip --version 1.2.3
+```
+
+Default output: `%USERPROFILE%\Documents\Untrace\untrace-injector.zip`.
+
+The GUI asks for Admin on launch. Primary action is **Install** when nothing is present, **Update** when Untrace is already installed. Logs append to `%USERPROFILE%\Documents\Untrace\untrace.log`.
 
 Build a standalone `dist\Untrace.exe` (optional):
 
 ```powershell
-task build-gui
+poetry run task build-gui
 ```
 
 `--deploy` is not supported on Windows yet. `--stealth` force-installs [Untrace Injector](https://chromewebstore.google.com/detail/untrace-injector/mgnlenokophofdnmlabkgpmlnolgomgj) from the Chrome Web Store (Admin for policy keys) and warms `%PROGRAMDATA%\Untrace\chrome_profile_template`. `--chromedriver` patches cached drivers (keep App Control off if the unsigned PE is blocked).
@@ -71,7 +83,8 @@ Windows uses the **flags / Chrome wrapper** plus optional **Web Store stealth**.
 
 | Topic | Behavior |
 |-------|----------|
-| **Stealth** | `ExtensionInstallForcelist` with the Chrome Web Store update URL only (non-enterprise Chrome blocks local/`http://` hosts — `[BLOCKED]` in `chrome://policy`). Install warms `%PROGRAMDATA%\Untrace\chrome_profile_template` once so force-install can write `Secure Preferences` (`location: 7`). That warmup opens a normal Chrome window briefly, then **kills all `chrome_real.exe` / `chrome.exe` processes**. The wrapper **copies** the template into each session profile before launch (no DevTools delay for Selenium). |
+| **Stealth** | `ExtensionInstallForcelist` with the Chrome Web Store update URL only (non-enterprise Chrome blocks local/`http://` hosts — `[BLOCKED]` in `chrome://policy`). Install warms `%PROGRAMDATA%\Untrace\chrome_profile_template` once so force-install can write `Secure Preferences` (`location: 7`). That warmup starts Chrome **minimized / off-screen**, then **kills all `chrome_real.exe` / `chrome.exe` processes**. The wrapper **copies** the template into each session profile before launch (no DevTools delay for Selenium). |
+| **GUI** | `python -m untrace --gui` (or `poetry run task gui`). Elevates via UAC. Shows **Install** or **Update**, status cards, in-app confirmations. Writes `%USERPROFILE%\Documents\Untrace\untrace.log`. Optional `poetry run task build-gui` → `dist\Untrace.exe`. |
 | **Profiles** | Manual (`--flags`) and Selenium both use `%TEMP%\chrome_random_profiles\profile_*`. Chromedriver’s temp `scoped_dir` is a **junction** into that tree so `DevToolsActivePort` still resolves. |
 | **Chrome wrapper** | `chrome.exe` → C# wrapper; real browser → `chrome_real.exe`. Strips chromedriver junk, applies launcher flags, **waits** for Chrome (no `exec`). Tracks `chrome_real` in a Job Object (`KILL_ON_JOB_CLOSE`) so `driver.quit()` also tears down Chrome children. |
 | **`--enable-automation`** | **Kept** in the wrapper **and** in the chromedriver binary patch — Chrome exits under `--remote-debugging-port` without it |
@@ -81,7 +94,7 @@ Windows uses the **flags / Chrome wrapper** plus optional **Web Store stealth**.
 
 If Selenium dies with “Chrome instance exited” after install, confirm the C# wrapper is current and that `--enable-automation` still reaches Chrome (Windows must not strip or binary-blank that flag). If the driver won’t start at all, check Smart App Control / WDAC (`WinError 4551`) and restore from `.untrace.bak` via `--uninstall` if needed.
 
-> **Warning:** If **Smart App Control** (or another Application Control / WDAC policy) is enabled on Windows, untrace may not work. The Chrome wrapper replaces `chrome.exe` with an unsigned C# binary, and `--chromedriver` produces an unsigned `chromedriver.exe`; Smart App Control can block either (`WinError 4551` for the driver). Turn Smart App Control off (or switch it to evaluation/off) if install succeeds but Chrome or Selenium still fails to launch. Close other Chrome windows before `--install --stealth`: template warmup ends by killing all Chrome processes on the machine.
+> **Warning:** If **Smart App Control** (or another Application Control / WDAC policy) is enabled on Windows, untrace may not work. The Chrome wrapper replaces `chrome.exe` with an unsigned C# binary, and `--chromedriver` produces an unsigned `chromedriver.exe`; Smart App Control can block either (`WinError 4551` for the driver). Turn Smart App Control off (or switch it to evaluation/off) if install succeeds but Chrome or Selenium still fails to launch. Install/uninstall (CLI or GUI) kills Chrome processes on the machine, including during stealth template warmup.
 
 ## Feature flags
 
@@ -176,6 +189,8 @@ untrace/
   chromedriver_patch.py  CDC patch / unpatch with .untrace.bak
   selenium_manager_patch.py  Patch selenium-manager to use the Chrome wrapper
   config.py              Persisted feature flags per root
+  gui_windows.py         Windows install/update GUI
+  applog.py              Documents\\Untrace\\untrace.log tee
   js/                    Stealth injection sources
 tests/
   test_chromedriver.py   Browser integration tests
@@ -188,5 +203,8 @@ tests/
 poetry install
 poetry run task lint          # format + fix with Ruff
 poetry run task lint-check    # verify only (CI)
+poetry run task gui           # Windows GUI (Admin)
+poetry run task build-gui     # dist\\Untrace.exe (Windows + PyInstaller)
+python -m untrace --pack-extension   # Chrome Web Store zip → Documents/Untrace/
 pytest
 ```

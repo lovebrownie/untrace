@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import platform
 import threading
+import time
 import tkinter as tk
 
 BG = "#010502"
@@ -369,6 +370,9 @@ class ActionButton(tk.Frame):
         self._pressed = False
         self._paint()
 
+    def set_text(self, text: str) -> None:
+        self._btn.configure(text=f"[ {text.upper()} ]")
+
 
 class TerminalOverlay(tk.Frame):
     def __init__(
@@ -477,6 +481,64 @@ def show_notice(
     )
 
 
+class LoadingOverlay(tk.Frame):
+    def __init__(self, master: tk.Misc, message: str = "refreshing status…") -> None:
+        super().__init__(master, bg="#010502")
+        self._job: str | None = None
+        self._phase = 0
+        self.place(relx=0, rely=0, relwidth=1, relheight=1)
+        self.lift()
+
+        dim = tk.Frame(self, bg="#010502")
+        dim.place(relx=0, rely=0, relwidth=1, relheight=1)
+
+        card = tk.Frame(self, bg=GREEN_DARK, padx=2, pady=2)
+        card.place(relx=0.5, rely=0.5, anchor=tk.CENTER)
+        bezel = tk.Frame(card, bg=BORDER, padx=1, pady=1)
+        bezel.pack()
+        body = tk.Frame(bezel, bg=SURFACE, padx=36, pady=28)
+        body.pack()
+
+        row = tk.Frame(body, bg=SURFACE)
+        row.pack()
+        self._spinner = ActivitySpinner(row, bg=SURFACE, fg=GREEN, font=(FONT, 16))
+        self._spinner.pack(side=tk.LEFT, padx=(0, 12))
+        self._label = tk.Label(
+            row,
+            text=message,
+            bg=SURFACE,
+            fg=GREEN_BRIGHT,
+            font=(FONT, 12, "bold"),
+        )
+        self._label.pack(side=tk.LEFT)
+
+        self._bar = tk.Canvas(
+            body, width=220, height=4, bg=SURFACE, highlightthickness=0, borderwidth=0
+        )
+        self._bar.pack(pady=(18, 0))
+        self._tick()
+
+    def _tick(self) -> None:
+        self._phase += 1
+        self._bar.delete("all")
+        w = 220
+        self._bar.create_rectangle(0, 0, w, 4, fill=GREEN_DARK, outline="")
+        span = 70
+        x = int((self._phase * 10) % (w + span)) - span
+        self._bar.create_rectangle(x, 0, x + span, 4, fill=GREEN, outline="")
+        self._bar.create_rectangle(
+            x, 0, x + span // 3, 4, fill=GREEN_BRIGHT, outline=""
+        )
+        self._job = self.after(40, self._tick)
+
+    def close(self) -> None:
+        if self._job is not None:
+            self.after_cancel(self._job)
+            self._job = None
+        self._spinner.stop()
+        self.destroy()
+
+
 class TerminalScrollbar(tk.Canvas):
     def __init__(self, master: tk.Misc, target: tk.Canvas) -> None:
         super().__init__(
@@ -501,15 +563,35 @@ class TerminalScrollbar(tk.Canvas):
         self._tick()
 
     def set(self, first: float | str, last: float | str) -> None:
-        self._first = float(first)
-        self._last = float(last)
+        self._first = max(0.0, min(1.0, float(first)))
+        self._last = max(0.0, min(1.0, float(last)))
+        if self._last < self._first:
+            self._last = self._first
         self._redraw()
+
+    def _track_metrics(self) -> tuple[int, int, int, float]:
+        h = max(self.winfo_height(), 2)
+        track = max(1, h - 36)
+        span = max(0.0, self._last - self._first)
+        if span >= 0.999:
+            thumb_h = track
+        else:
+            thumb_h = max(28, int(span * track))
+            thumb_h = min(thumb_h, track)
+        return h, track, thumb_h, span
+
+    def _thumb_y(self, track: int, thumb_h: int, span: float) -> int:
+        travel = max(0, track - thumb_h)
+        if travel == 0 or span >= 0.999:
+            return 18
+        max_first = max(1e-9, 1.0 - span)
+        ratio = max(0.0, min(1.0, self._first / max_first))
+        return 18 + int(ratio * travel)
 
     def _redraw(self) -> None:
         self.delete("all")
-        h = max(self.winfo_height(), 2)
+        h, track, thumb_h, span = self._track_metrics()
         w = max(self.winfo_width(), 2)
-        span = max(0.05, self._last - self._first)
         self.create_rectangle(0, 0, w, h, fill=BG, outline="")
         self.create_rectangle(5, 18, w - 5, h - 18, fill=GREEN_DARK, outline="")
         self.create_text(
@@ -522,8 +604,7 @@ class TerminalScrollbar(tk.Canvas):
             fill=GREEN if self._hover else MUTED,
             font=(FONT, 7),
         )
-        thumb_h = max(32, int(span * (h - 36)))
-        thumb_y = 18 + int(self._first * (h - 36 - thumb_h))
+        thumb_y = self._thumb_y(track, thumb_h, span)
         color = GREEN_BRIGHT if self._hover or self._dragging else GREEN
         pad = 3 if self._hover or self._dragging else 4
         self._thumb = (thumb_y, thumb_y + thumb_h)
@@ -554,30 +635,27 @@ class TerminalScrollbar(tk.Canvas):
             self.after_cancel(self._job)
             self._job = None
 
-    def _fraction_at(self, y: int) -> float:
-        h = max(self.winfo_height(), 2)
-        span = max(0.05, self._last - self._first)
-        thumb_h = max(32, int(span * (h - 36)))
-        usable = max(1, h - 36 - thumb_h)
-        return max(0.0, min(1.0, (y - 18) / usable))
+    def _moveto_from_y(self, y: int) -> None:
+        _h, track, thumb_h, span = self._track_metrics()
+        travel = max(1, track - thumb_h)
+        if span >= 0.999:
+            self._target.yview_moveto(0.0)
+            return
+        ratio = max(0.0, min(1.0, (y - 18) / travel))
+        self._target.yview_moveto(ratio * (1.0 - span))
 
     def _on_press(self, event) -> None:
         if self._thumb[0] <= event.y <= self._thumb[1]:
             self._dragging = True
             self._drag_offset = event.y - self._thumb[0]
         else:
-            self._target.yview_moveto(self._fraction_at(event.y))
+            self._moveto_from_y(event.y - (self._thumb[1] - self._thumb[0]) // 2)
         self._redraw()
 
     def _on_drag(self, event) -> None:
         if not self._dragging:
             return
-        h = max(self.winfo_height(), 2)
-        span = max(0.05, self._last - self._first)
-        thumb_h = max(32, int(span * (h - 36)))
-        usable = max(1, h - 36 - thumb_h)
-        y = event.y - self._drag_offset - 18
-        self._target.yview_moveto(max(0.0, min(1.0, y / usable)))
+        self._moveto_from_y(event.y - self._drag_offset)
 
     def _on_release(self, _event=None) -> None:
         self._dragging = False
@@ -600,12 +678,14 @@ class TerminalScrollbar(tk.Canvas):
 class UntraceGui(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
-        self.title("Untrace")
+        self.title("untrace")
         self.minsize(540, 480)
         self.geometry("580x720")
         self.state("zoomed")
         self.configure(bg=BG)
         self._busy = False
+        self._refreshing = False
+        self._loading: LoadingOverlay | None = None
         self._snapshot: dict | None = None
         self._effects: list = []
         self._hero_edge: tk.Frame | None = None
@@ -697,15 +777,8 @@ class UntraceGui(tk.Tk):
         )
         self._hero_sub.pack(anchor=tk.W, pady=(4, 0))
 
-        self._busy_bar = tk.Canvas(
-            self._body, height=4, bg=BG, highlightthickness=0, borderwidth=0
-        )
-        self._busy_bar.pack(fill=tk.X, pady=(0, 16))
-        self._busy_phase = 0
-        self._busy_job: str | None = None
-
         section = tk.Frame(self._body, bg=BG)
-        section.pack(fill=tk.X, pady=(0, 8))
+        section.pack(fill=tk.X, pady=(16, 8))
         tk.Label(section, text="┌─ modules", bg=BG, fg=MUTED, font=(FONT, 9)).pack(
             side=tk.LEFT
         )
@@ -752,31 +825,19 @@ class UntraceGui(tk.Tk):
 
         self.refresh_status()
 
-    def _draw_busy_bar(self) -> None:
-        self._busy_bar.delete("all")
-        w = max(self._busy_bar.winfo_width(), 2)
-        self._busy_bar.create_rectangle(0, 0, w, 4, fill=GREEN_DARK, outline="")
-        if not self._busy:
-            return
-        span = max(40, w // 4)
-        x = int((self._busy_phase * 8) % (w + span)) - span
-        self._busy_bar.create_rectangle(x, 0, x + span, 4, fill=GREEN, outline="")
-        self._busy_bar.create_rectangle(
-            x, 0, x + span // 4, 4, fill=GREEN_BRIGHT, outline=""
-        )
+    def _show_loading(self, message: str) -> None:
+        if self._loading is not None:
+            self._loading.close()
+        self._loading = LoadingOverlay(self, message)
 
-    def _tick_busy(self) -> None:
-        if not self._busy:
-            self._draw_busy_bar()
-            return
-        self._busy_phase += 1
-        self._draw_busy_bar()
-        self._busy_job = self.after(30, self._tick_busy)
+    def _hide_loading(self) -> None:
+        if self._loading is not None:
+            self._loading.close()
+            self._loading = None
 
     def _on_close(self) -> None:
         self._release_wheel()
-        if self._busy_job is not None:
-            self.after_cancel(self._busy_job)
+        self._hide_loading()
         for effect in self._effects:
             stop = getattr(effect, "stop", None)
             if callable(stop):
@@ -838,21 +899,64 @@ class UntraceGui(tk.Tk):
         self.after_idle(self._on_body_configure)
 
         if not self._busy:
+            self.install_btn.set_text("Update" if installed else "Install")
             self.install_btn.set_enabled(bool(snapshot.get("can_install")))
             self.uninstall_btn.set_enabled(bool(snapshot.get("can_uninstall")))
             self.refresh_btn.set_enabled(True)
 
-    def refresh_status(self) -> None:
-        try:
-            self._render(_fetch_status())
-        except Exception:
+    def refresh_status(self, on_done=None) -> None:
+        if self._busy or self._refreshing:
+            if on_done is not None:
+                on_done()
+            return
+        self._refreshing = True
+        self._refresh_on_done = on_done
+        self.install_btn.set_enabled(False)
+        self.uninstall_btn.set_enabled(False)
+        self.refresh_btn.set_enabled(False)
+        self._show_loading("refreshing status…")
+        started = time.monotonic()
+
+        def worker() -> None:
+            snap = None
+            failed = False
+            try:
+                snap = _fetch_status()
+            except Exception:
+                failed = True
+
+            def finish() -> None:
+                elapsed_ms = int((time.monotonic() - started) * 1000)
+                delay = max(0, 450 - elapsed_ms)
+                self.after(delay, lambda: self._refresh_done(snap, failed))
+
+            self.after(0, finish)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _refresh_done(self, snapshot: dict | None, failed: bool) -> None:
+        self._hide_loading()
+        self._refreshing = False
+        callback = getattr(self, "_refresh_on_done", None)
+        self._refresh_on_done = None
+        if failed or snapshot is None:
             self._clear_cards()
             self.hero_title.configure(text="status unavailable", fg=HOT)
             self._hero_sub.configure(text="check Documents\\Untrace\\untrace.log")
             if self._hero_edge is not None:
                 self._hero_edge.configure(bg=HOT)
             if not self._busy:
+                self.install_btn.set_enabled(
+                    bool((self._snapshot or {}).get("can_install"))
+                )
                 self.uninstall_btn.set_enabled(False)
+                self.refresh_btn.set_enabled(True)
+            if callback is not None:
+                callback()
+            return
+        self._render(snapshot)
+        if callback is not None:
+            callback()
 
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy
@@ -860,27 +964,28 @@ class UntraceGui(tk.Tk):
             self.install_btn.set_enabled(False)
             self.uninstall_btn.set_enabled(False)
             self.refresh_btn.set_enabled(False)
-            self._busy_phase = 0
-            self._tick_busy()
             return
-        if self._busy_job is not None:
-            self.after_cancel(self._busy_job)
-            self._busy_job = None
-        self._draw_busy_bar()
+        if self._refreshing:
+            return
         snap = self._snapshot or {}
+        installed = bool(snap.get("installed"))
+        self.install_btn.set_text("Update" if installed else "Install")
         self.install_btn.set_enabled(bool(snap.get("can_install", True)))
         self.uninstall_btn.set_enabled(bool(snap.get("can_uninstall")))
         self.refresh_btn.set_enabled(True)
 
     def _run(self, action: str) -> None:
-        if self._busy:
+        if self._busy or self._refreshing:
             return
         if action == "uninstall" and not (self._snapshot or {}).get("can_uninstall"):
             return
         if action == "install" and not (self._snapshot or {}).get("can_install"):
             return
 
-        label = "Install" if action == "install" else "Uninstall"
+        if action == "install":
+            label = "Update" if (self._snapshot or {}).get("installed") else "Install"
+        else:
+            label = "Uninstall"
 
         def on_confirm(ok: bool) -> None:
             if not ok:
@@ -897,10 +1002,7 @@ class UntraceGui(tk.Tk):
 
     def _start_action(self, action: str, label: str) -> None:
         self._set_busy(True)
-        self.hero_title.configure(text=f"{label.lower()}ing…", fg=GREEN)
-        self._hero_sub.configure(text="writing system state")
-        if self._hero_edge is not None:
-            self._hero_edge.configure(bg=GREEN)
+        self._show_loading(f"{label.lower()}ing…")
 
         def worker() -> None:
             code = 1
@@ -909,29 +1011,35 @@ class UntraceGui(tk.Tk):
                 code = _run_action(action)
             except Exception as exc:
                 err = str(exc)
-            self.after(0, lambda: self._done(action, code, err))
+            self.after(0, lambda: self._done(action, label, code, err))
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _done(self, action: str, code: int, err: str) -> None:
+    def _done(self, action: str, label: str, code: int, err: str) -> None:
+        self._hide_loading()
         self._set_busy(False)
-        self.refresh_status()
-        if err:
-            show_notice(self, "error", err, danger=True)
-            return
-        if code == 0:
-            show_notice(
-                self,
-                "done",
-                "install finished." if action == "install" else "uninstall finished.",
-            )
-        else:
-            show_notice(
-                self,
-                "error",
-                f"{action} exited with code {code}.",
-                danger=True,
-            )
+
+        def after_status() -> None:
+            if err:
+                show_notice(self, "error", err, danger=True)
+                return
+            if code == 0:
+                if action == "uninstall":
+                    msg = "untrace uninstalled."
+                elif label.lower() == "update":
+                    msg = "untrace updated."
+                else:
+                    msg = "untrace installed."
+                show_notice(self, "done", msg)
+            else:
+                show_notice(
+                    self,
+                    "error",
+                    f"{label.lower()} exited with code {code}.",
+                    danger=True,
+                )
+
+        self.refresh_status(on_done=after_status)
 
 
 def main() -> None:

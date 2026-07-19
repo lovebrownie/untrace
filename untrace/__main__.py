@@ -1848,6 +1848,20 @@ def status():
     status_windows() if IS_WINDOWS else status_linux()
 
 
+def pack_extension(*, output: str | None = None, version: str | None = None) -> Path:
+    from untrace import applog
+
+    out = Path(output) if output else applog.log_dir() / "untrace-injector.zip"
+    path = injector.pack_extension_zip(
+        out,
+        list(DEFAULT_CHROME_SCRIPTS),
+        CHROME_SCRIPTS,
+        version=version,
+    )
+    print(path)
+    return path
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Force Chrome to launch with extra flags + random --user-data-dir each time.",
@@ -1855,6 +1869,7 @@ def main():
         epilog=(
             "Examples:\n"
             "  sudo python3 -m untrace --install --stealth --flags --chromedriver\n"
+            "  python -m untrace --pack-extension\n"
             "  pytest tests/test_chromedriver.py"
         ),
     )
@@ -1866,6 +1881,11 @@ def main():
         "--gui",
         action="store_true",
         help="open the Windows install/uninstall GUI",
+    )
+    group.add_argument(
+        "--pack-extension",
+        action="store_true",
+        help="build a Chrome Web Store zip (no private key in manifest)",
     )
     toggles = parser.add_argument_group("features (used with --install)")
     toggles.add_argument(
@@ -1886,6 +1906,17 @@ def main():
         action="store_true",
         help="patch chromedriver binaries (neutralize CDC injection)",
     )
+    pack_opts = parser.add_argument_group("pack-extension")
+    pack_opts.add_argument(
+        "--output",
+        metavar="PATH",
+        help="zip output path (default: Documents/Untrace/untrace-injector.zip)",
+    )
+    pack_opts.add_argument(
+        "--version",
+        metavar="VER",
+        help="manifest version for --pack-extension (default: auto timestamp)",
+    )
 
     args = parser.parse_args()
     from untrace import applog
@@ -1903,6 +1934,8 @@ def main():
         uninstall()
     elif args.status:
         status()
+    elif args.pack_extension:
+        pack_extension(output=args.output, version=args.version)
     elif args.gui:
         if not IS_WINDOWS:
             print("Error: --gui is Windows-only.", file=sys.stderr)

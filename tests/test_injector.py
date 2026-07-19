@@ -220,3 +220,26 @@ def test_seed_extension_into_profile(temp_untrace):
         == injector.LOCATION_UNPACKED
     )
     assert prefs["extensions"]["ui"]["developer_mode"] is True
+
+
+def test_pack_extension_zip_for_webstore(temp_untrace, tmp_path):
+    out = tmp_path / "untrace-injector.zip"
+    path = injector.pack_extension_zip(
+        out,
+        list(DEFAULT_CHROME_SCRIPTS),
+        CHROME_SCRIPTS,
+        version="9.8.7",
+    )
+    assert path == out.resolve()
+    assert out.is_file()
+
+    import zipfile
+
+    with zipfile.ZipFile(out) as zf:
+        names = zf.namelist()
+        assert "manifest.json" in names
+        assert any(n.startswith("js/") and n.endswith(".js") for n in names)
+        manifest = json.loads(zf.read("manifest.json"))
+    assert manifest["version"] == "9.8.7"
+    assert "key" not in manifest
+    assert manifest["manifest_version"] == 3

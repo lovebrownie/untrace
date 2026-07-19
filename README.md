@@ -129,10 +129,12 @@ Windows uses the **flags / Chrome wrapper** plus optional **Web Store stealth**.
 | **Build** | `python -m untrace --build` → `dist/Untrace-vX.Y.Z-Setup.exe` + `dist/Untrace-vX.Y.Z.exe` (portable) + extension zip. Requires [Inno Setup 6](https://jrsoftware.org/isinfo.php) (`ISCC.exe`) — `winget install JRSoftware.InnoSetup` or `choco install innosetup`. |
 | **Profiles** | Manual (`--flags`) and Selenium both use `%TEMP%\chrome_random_profiles\profile_*`. Chromedriver’s temp `scoped_dir` is a **junction** into that tree so `DevToolsActivePort` still resolves. |
 | **Chrome wrapper** | `chrome.exe` → C# wrapper; real browser → `chrome_real.exe`. Strips chromedriver junk, applies launcher flags, **waits** for Chrome (no `exec`). Tracks `chrome_real` in a Job Object (`KILL_ON_JOB_CLOSE`) so `driver.quit()` also tears down Chrome children. |
-| **`--enable-automation`** | **Kept** in the wrapper **and** in the chromedriver binary patch — Chrome exits under `--remote-debugging-port` without it |
+| **`--enable-automation`** | **Kept** in the wrapper **and** in the chromedriver binary patch — Chrome exits under `--remote-debugging-port` without it. The “Chrome is being controlled by automated test software” bar is expected on Windows. |
 | **Chromedriver patch** | CDC + blank `test-type=webdriver`; does **not** blank `enable-automation`. Edited PE is unsigned — SAC/WDAC may block (`WinError 4551`) |
 | **Selenium-manager** | Not patched (bash wrapper is Linux-only) |
 | **Roots** | `%LOCALAPPDATA%\Untrace`, `%PROGRAMDATA%\Untrace` |
+
+The Windows automation **infobar is cosmetic** — sites do not detect that UI strip. Bot checks care about page-side signals (`navigator.webdriver`, CDC, etc.), which `--stealth` / the extension and the chromedriver CDC patch cover. Keeping `--enable-automation` is the remote-debugging tradeoff; Linux can strip it and hide the bar, Windows cannot without Chrome exiting.
 
 If Selenium dies with “Chrome instance exited” after install, confirm the C# wrapper is current and that `--enable-automation` still reaches Chrome (Windows must not strip or binary-blank that flag). If the driver won’t start at all, check Smart App Control / WDAC (`WinError 4551`) and restore from `.untrace.bak` via `--uninstall` if needed.
 

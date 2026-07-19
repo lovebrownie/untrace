@@ -1,5 +1,9 @@
 # Untrace
 
+<p align="center">
+  <img src="assets/icon.svg" alt="untrace" width="128" height="128">
+</p>
+
 Untrace makes Chrome automation harder to detect. Install once, then use normal Chrome or bare Selenium — no per-script options, no test-side hacks.
 
 Four optional layers, toggled independently:
@@ -58,7 +62,7 @@ python -m untrace --gui
 # or: poetry run task gui
 ```
 
-Pack a Chrome Web Store upload zip (no `key` in manifest):
+Pack a Chrome Web Store upload zip (no `key` in manifest). The zip includes transparent icons (`icons/icon-16.png`, `48`, `128`) and sets `manifest.icons` + `action.default_icon`:
 
 ```powershell
 python -m untrace --pack-extension
@@ -67,7 +71,7 @@ python -m untrace --pack-extension
 
 Default output: `%USERPROFILE%\Documents\Untrace\untrace-injector.zip`.
 
-The GUI asks for Admin on launch. Primary action is **Install** when nothing is present, **Update** when Untrace is already installed. Logs append to `%USERPROFILE%\Documents\Untrace\untrace.log`.
+The GUI asks for Admin on launch (window icon from `assets/icon.ico`). Primary action is **Install** when nothing is present, **Update** when Untrace is already installed. Logs append to `%USERPROFILE%\Documents\Untrace\untrace.log`.
 
 Build a standalone `dist\Untrace.exe` (optional):
 
@@ -183,9 +187,13 @@ Optional (off by default): `iframe.contentWindow`, `navigator.plugins`, `navigat
 ## Project layout
 
 ```
+assets/
+  icon.svg               Brand mark (transparent background)
+  icon.png / icon-*.png  Raster icons (16 / 48 / 128) for the extension + GUI
+  icon.ico               Windows GUI / PyInstaller icon
 untrace/
   __main__.py            CLI, Chrome wrapper, script catalog
-  injector.py            Extension build, profile seeding
+  injector.py            Extension build, icons → manifest, profile seeding
   chromedriver_patch.py  CDC patch / unpatch with .untrace.bak
   selenium_manager_patch.py  Patch selenium-manager to use the Chrome wrapper
   config.py              Persisted feature flags per root
@@ -196,6 +204,8 @@ tests/
   test_chromedriver.py   Browser integration tests
   conftest.py            Bare Selenium fixture
 ```
+
+Linux `--install --stealth` and `--pack-extension` copy `assets/icon-{16,48,128}.png` into the extension `icons/` folder and wire them into `manifest.json` (`icons` + `action.default_icon`).
 
 ## Development
 

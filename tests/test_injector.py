@@ -37,6 +37,9 @@ def test_setup_creates_extension(temp_untrace):
     assert (ext_dir / "manifest.json").is_file()
     assert (ext_dir / "js" / "utils.js").is_file()
     assert (ext_dir / "js" / "navigator.webdriver.js").is_file()
+    assert (ext_dir / "icons" / "icon-128.png").is_file()
+    manifest = json.loads((ext_dir / "manifest.json").read_text())
+    assert manifest["icons"]["128"] == "icons/icon-128.png"
     assert injector.is_installed()
 
 
@@ -239,7 +242,16 @@ def test_pack_extension_zip_for_webstore(temp_untrace, tmp_path):
         names = zf.namelist()
         assert "manifest.json" in names
         assert any(n.startswith("js/") and n.endswith(".js") for n in names)
+        assert "icons/icon-16.png" in names
+        assert "icons/icon-48.png" in names
+        assert "icons/icon-128.png" in names
         manifest = json.loads(zf.read("manifest.json"))
     assert manifest["version"] == "9.8.7"
     assert "key" not in manifest
     assert manifest["manifest_version"] == 3
+    assert manifest["icons"] == {
+        "16": "icons/icon-16.png",
+        "48": "icons/icon-48.png",
+        "128": "icons/icon-128.png",
+    }
+    assert manifest["action"]["default_icon"] == manifest["icons"]

@@ -115,7 +115,17 @@ def clear_untrace_root_override() -> None:
 
 _sync_path_attrs()
 JS_SOURCE_DIR = Path(__file__).parent / "js"
+
+
+def _assets_dir() -> Path:
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return Path(sys._MEIPASS) / "assets"
+    return Path(__file__).resolve().parent.parent / "assets"
+
+
+ASSETS_DIR = _assets_dir()
 UTILS_FILENAME = "utils.js"
+EXTENSION_ICON_SIZES = ("16", "48", "128")
 
 LINUX_CHROME_POLICY_DIR = Path("/etc/opt/chrome/policies/managed")
 LINUX_CHROME_POLICY_FILE = LINUX_CHROME_POLICY_DIR / "untrace.json"
@@ -619,10 +629,39 @@ def wrap_iife(source: str, args: list | None = None) -> str:
     return f"({source})();\n"
 
 
+def extension_icon_paths() -> dict[str, Path]:
+    paths: dict[str, Path] = {}
+    for size in EXTENSION_ICON_SIZES:
+        path = ASSETS_DIR / f"icon-{size}.png"
+        if not path.is_file():
+            fallback = ASSETS_DIR / "icon.png"
+            if size == "128" and fallback.is_file():
+                path = fallback
+            else:
+                raise FileNotFoundError(f"Missing extension icon: {path}")
+        paths[size] = path
+    return paths
+
+
+def _deploy_extension_icons(ext_root: Path) -> dict[str, str]:
+    icons_dir = ext_root / "icons"
+    icons_dir.mkdir(parents=True, exist_ok=True)
+    icons: dict[str, str] = {}
+    for size, src in extension_icon_paths().items():
+        name = f"icon-{size}.png"
+        shutil.copy2(src, icons_dir / name)
+        icons[size] = f"icons/{name}"
+    return icons
+
+
 def build_manifest(
-    script_files: list[str], public_key_b64: str, version: str = "1.0"
+    script_files: list[str],
+    public_key_b64: str,
+    version: str = "1.0",
+    *,
+    icons: dict[str, str] | None = None,
 ) -> dict:
-    return {
+    manifest: dict = {
         "manifest_version": 3,
         "name": "Untrace Injector",
         "version": version,
@@ -638,10 +677,19 @@ def build_manifest(
             }
         ],
     }
+    if icons:
+        manifest["icons"] = icons
+        manifest["action"] = {"default_icon": icons}
+    return manifest
 
 
-def build_store_manifest(script_files: list[str], version: str = "1.0") -> dict:
-    manifest = build_manifest(script_files, "", version)
+def build_store_manifest(
+    script_files: list[str],
+    version: str = "1.0",
+    *,
+    icons: dict[str, str] | None = None,
+) -> dict:
+    manifest = build_manifest(script_files, "", version, icons=icons)
     del manifest["key"]
     return manifest
 
@@ -660,9 +708,7 @@ def pack_extension_zip(
     with tempfile.TemporaryDirectory(prefix="untrace-ext-") as tmp:
         root = Path(tmp) / "extension"
         js_dir = root / "js"
-        script_files = _deploy_stealth_scripts(
-            js_dir, enabled_scripts, script_catalog
-        )
+        script_files = _deploy_stealth_scripts(js_dir, enabled_scripts, script_catalog)
         custom_name = "custom.js"
         custom_src = JS_SOURCE_DIR / custom_name
         if custom_src.is_file():
@@ -671,7 +717,8 @@ def pack_extension_zip(
             (js_dir / custom_name).write_text(DEFAULT_CUSTOM_JS)
         script_files.append(f"js/{custom_name}")
 
-        manifest = build_store_manifest(script_files, ver)
+        icons = _deploy_extension_icons(root)
+        manifest = build_store_manifest(script_files, ver, icons=icons)
         (root / "manifest.json").write_text(
             json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
         )
@@ -839,9 +886,10 @@ def setup(
     ext_js_dir = EXTENSION_DIR / "js"
     script_files = _deploy_stealth_scripts(ext_js_dir, enabled_scripts, script_catalog)
     script_files.append(_deploy_custom_script(ext_js_dir))
+    icons = _deploy_extension_icons(EXTENSION_DIR)
 
     version = _extension_version()
-    manifest = build_manifest(script_files, public_key_b64, version)
+    manifest = build_manifest(script_files, public_key_b64, version, icons=icons)
     (EXTENSION_DIR / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
 
     os.chmod(EXTENSION_DIR, 0o755)

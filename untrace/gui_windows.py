@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import math
 import platform
+import random
+import sys
 import threading
 import time
 import tkinter as tk
+from pathlib import Path
 
 BG = "#010502"
 SURFACE = "#051208"
@@ -25,6 +28,17 @@ BTN_HOVER = "#12301c"
 BTN_DISABLED = "#06100a"
 TEXT_DISABLED = "#2a4a32"
 FONT = "Consolas"
+
+
+def _assets_dir() -> Path:
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return Path(sys._MEIPASS) / "assets"
+    return Path(__file__).resolve().parent.parent / "assets"
+
+
+ASSETS_DIR = _assets_dir()
+ICON_PNG = ASSETS_DIR / "icon.png"
+ICON_ICO = ASSETS_DIR / "icon.ico"
 
 
 def _ensure_windows() -> None:
@@ -72,36 +86,171 @@ def _bind_tree(widget: tk.Misc, sequence: str, handler) -> None:
         _bind_tree(child, sequence, handler)
 
 
+def phosphor_shell(
+    master: tk.Misc, *, content_bg: str = BG, pad: int = 0
+) -> tuple[tk.Frame, tk.Frame]:
+    glow = tk.Frame(master, bg=GREEN, padx=1, pady=1)
+    mid = tk.Frame(glow, bg=GREEN_DIM, padx=2, pady=2)
+    mid.pack(fill=tk.BOTH, expand=True)
+    edge = tk.Frame(mid, bg=MUTED, padx=1, pady=1)
+    edge.pack(fill=tk.BOTH, expand=True)
+    body = tk.Frame(edge, bg=content_bg, padx=pad, pady=pad)
+    body.pack(fill=tk.BOTH, expand=True)
+    return glow, body
+
+
 class GreenRule(tk.Canvas):
     def __init__(self, master: tk.Misc, *, height: int = 3) -> None:
         super().__init__(
             master, height=height, bg=BG, highlightthickness=0, borderwidth=0
         )
         self._height = height
+        self._last_w = -1
         self.bind("<Configure>", self._redraw)
         self._redraw()
 
     def _redraw(self, _event=None) -> None:
-        self.delete("all")
         w = max(self.winfo_width(), 2)
-        self.create_rectangle(0, 0, w, self._height, fill=GREEN_DARK, outline="")
+        if w == self._last_w:
+            return
+        self._last_w = w
+        self.delete("all")
+        h = self._height
+        self.create_rectangle(0, 0, w, h, fill=GREEN_DIM, outline="")
+        if h >= 2:
+            self.create_rectangle(0, 0, w, 1, fill=GREEN, outline="")
+            self.create_rectangle(0, h - 1, w, h, fill=BORDER, outline="")
+        else:
+            self.create_rectangle(0, 0, w, h, fill=GREEN, outline="")
 
 
 class TypewriterLabel(tk.Label):
-    def __init__(self, master: tk.Misc, full: str, **kwargs) -> None:
-        super().__init__(master, text="", **kwargs)
+    def __init__(
+        self,
+        master: tk.Misc,
+        full: str,
+        *,
+        type_ms: int = 220,
+        hold_ms: int = 4500,
+        erase_ms: int = 140,
+        gap_ms: int = 900,
+        typo_chance: float = 0.08,
+        **kwargs,
+    ) -> None:
+        super().__init__(master, text=full, **kwargs)
         self._full = full
-        self._i = 0
+        self._display = full
+        self._target_i = len(full)
+        self._type_ms = type_ms
+        self._hold_ms = hold_ms
+        self._erase_ms = erase_ms
+        self._gap_ms = gap_ms
+        self._typo_chance = typo_chance
+        self._typo_left = 0
+        self._typo_count = 0
+        self._fix_left = 0
+        self._typo_used = False
+        self._hesitate = False
+        self._phase = "hold"
         self._job: str | None = None
-        self._tick()
+        self._running = True
+        self._paused = False
+        self._job = self.after(self._hold_ms, self._tick)
+
+    def _wrong_char(self, correct: str) -> str:
+        pool = "abcdefghijklmnopqrstuvwxyz"
+        options = [c for c in pool if c != correct.lower()]
+        ch = random.choice(options)
+        return ch.upper() if correct.isupper() else ch
+
+    def pause(self) -> None:
+        self._paused = True
+        if self._job is not None:
+            self.after_cancel(self._job)
+            self._job = None
+
+    def resume(self) -> None:
+        if not self._paused:
+            return
+        self._paused = False
+        if self._running and self._job is None:
+            self._job = self.after(self._type_ms, self._tick)
 
     def _tick(self) -> None:
-        if self._i <= len(self._full):
-            self.configure(text=self._full[: self._i])
-            self._i += 1
-            self._job = self.after(45, self._tick)
+        self._job = None
+        if not self._running or self._paused:
+            return
+        if self._phase == "type":
+            if self._hesitate:
+                self._hesitate = False
+                self._job = self.after(self._erase_ms * 2, self._tick)
+                return
+            if self._fix_left > 0:
+                self._display = self._display[:-1]
+                self._fix_left -= 1
+                self.configure(text=self._display)
+                self._job = self.after(self._erase_ms, self._tick)
+                return
+            if self._typo_left > 0:
+                correct = (
+                    self._full[self._target_i]
+                    if self._target_i < len(self._full)
+                    else "a"
+                )
+                self._display += self._wrong_char(correct)
+                self._typo_left -= 1
+                if self._typo_left == 0:
+                    self._fix_left = self._typo_count
+                    self._hesitate = True
+                self.configure(text=self._display)
+                self._job = self.after(self._type_ms, self._tick)
+                return
+            if self._target_i >= len(self._full):
+                self.configure(text=self._full)
+                self._phase = "hold"
+                self._job = self.after(self._hold_ms, self._tick)
+                return
+            if (
+                not self._typo_used
+                and self._target_i > 0
+                and self._target_i < len(self._full)
+                and random.random() < self._typo_chance
+            ):
+                self._typo_used = True
+                self._typo_count = random.randint(1, 2)
+                self._typo_left = self._typo_count
+                self._tick()
+                return
+            self._display += self._full[self._target_i]
+            self._target_i += 1
+            self.configure(text=self._display)
+            self._job = self.after(self._type_ms, self._tick)
+        elif self._phase == "hold":
+            self._phase = "erase"
+            self._tick()
+        elif self._phase == "erase":
+            if self._display:
+                self._display = self._display[:-1]
+                self._target_i = min(self._target_i, len(self._display))
+                self.configure(text=self._display)
+                self._job = self.after(self._erase_ms, self._tick)
+            else:
+                self._target_i = 0
+                self._phase = "gap"
+                self._job = self.after(self._gap_ms, self._tick)
+        else:
+            self._phase = "type"
+            self._display = ""
+            self._target_i = 0
+            self._typo_left = 0
+            self._fix_left = 0
+            self._typo_used = False
+            self._hesitate = False
+            self._tick()
 
     def stop(self) -> None:
+        self._running = False
+        self._paused = True
         if self._job is not None:
             self.after_cancel(self._job)
             self._job = None
@@ -112,14 +261,32 @@ class BlinkCursor(tk.Label):
         super().__init__(master, **kwargs)
         self._on = True
         self._job: str | None = None
+        self._paused = False
         self._tick()
 
+    def pause(self) -> None:
+        self._paused = True
+        if self._job is not None:
+            self.after_cancel(self._job)
+            self._job = None
+
+    def resume(self) -> None:
+        if not self._paused:
+            return
+        self._paused = False
+        if self._job is None:
+            self._job = self.after(480, self._tick)
+
     def _tick(self) -> None:
+        self._job = None
+        if self._paused:
+            return
         self._on = not self._on
         self.configure(text="▌" if self._on else " ")
         self._job = self.after(480, self._tick)
 
     def stop(self) -> None:
+        self._paused = True
         if self._job is not None:
             self.after_cancel(self._job)
             self._job = None
@@ -131,9 +298,21 @@ class PulseDot(tk.Canvas):
         self._on = on
         self._phase = 0
         self._job: str | None = None
+        self._paused = True
         self._paint()
-        if on:
-            self._tick()
+
+    def pause(self) -> None:
+        self._paused = True
+        if self._job is not None:
+            self.after_cancel(self._job)
+            self._job = None
+
+    def resume(self) -> None:
+        if not self._paused:
+            return
+        self._paused = False
+        if self._on and self._job is None:
+            self._job = self.after(55, self._tick)
 
     def _paint(self) -> None:
         self.delete("all")
@@ -149,14 +328,15 @@ class PulseDot(tk.Canvas):
             self.create_oval(7, 7, 11, 11, fill=HOT, outline="")
 
     def _tick(self) -> None:
+        self._job = None
+        if self._paused or not self._on:
+            return
         self._phase += 1
         self._paint()
         self._job = self.after(55, self._tick)
 
     def stop(self) -> None:
-        if self._job is not None:
-            self.after_cancel(self._job)
-            self._job = None
+        self.pause()
 
 
 class ActivitySpinner(tk.Label):
@@ -167,10 +347,25 @@ class ActivitySpinner(tk.Label):
         self._i = 0
         self._job: str | None = None
         self._running = True
+        self._paused = False
         self._tick()
 
+    def pause(self) -> None:
+        self._paused = True
+        if self._job is not None:
+            self.after_cancel(self._job)
+            self._job = None
+
+    def resume(self) -> None:
+        if not self._paused:
+            return
+        self._paused = False
+        if self._running and self._job is None:
+            self._job = self.after(80, self._tick)
+
     def _tick(self) -> None:
-        if not self._running:
+        self._job = None
+        if not self._running or self._paused:
             return
         self._i = (self._i + 1) % len(self.FRAMES)
         self.configure(text=self.FRAMES[self._i])
@@ -178,6 +373,7 @@ class ActivitySpinner(tk.Label):
 
     def stop(self) -> None:
         self._running = False
+        self._paused = True
         if self._job is not None:
             self.after_cancel(self._job)
             self._job = None
@@ -195,7 +391,7 @@ class Pill(tk.Frame):
 class FeatureCard(tk.Frame):
     def __init__(self, master: tk.Misc, label: str, index: int, *, on: bool) -> None:
         super().__init__(
-            master, bg=SURFACE, highlightthickness=1, highlightbackground=BORDER
+            master, bg=SURFACE, highlightthickness=1, highlightbackground=MUTED
         )
         self._on = on
         self._dot: PulseDot | None = None
@@ -255,7 +451,7 @@ class FeatureCard(tk.Frame):
         self._label.configure(fg=GREEN_BRIGHT)
 
     def _leave(self, _event=None) -> None:
-        self.configure(highlightbackground=BORDER, bg=SURFACE)
+        self.configure(highlightbackground=MUTED, bg=SURFACE)
         self._accent.configure(bg=GREEN if self._on else BORDER)
         for widget in self._surfaces:
             try:
@@ -288,7 +484,7 @@ class ActionButton(tk.Frame):
         self._primary = primary
         self._danger = danger
         self._pressed = False
-        border = GREEN if primary else (HOT if danger else BORDER)
+        border = GREEN if primary else (HOT if danger else MUTED)
         self.configure(highlightthickness=1, highlightbackground=border)
         self._btn = tk.Label(
             self,
@@ -330,7 +526,7 @@ class ActionButton(tk.Frame):
             self.configure(highlightbackground=HOT)
             self._btn.configure(bg=HOT_DIM, fg=HOT, cursor="hand2")
         else:
-            self.configure(highlightbackground=BORDER)
+            self.configure(highlightbackground=MUTED)
             self._btn.configure(bg=BTN, fg=TEXT, cursor="hand2")
 
     def _enter(self, _event=None) -> None:
@@ -394,12 +590,9 @@ class TerminalOverlay(tk.Frame):
         dim.place(relx=0, rely=0, relwidth=1, relheight=1)
         dim.bind("<Button-1>", lambda _e: None)
 
-        card = tk.Frame(self, bg=GREEN_DARK, padx=2, pady=2)
+        card, body = phosphor_shell(self, content_bg=SURFACE, pad=0)
         card.place(relx=0.5, rely=0.5, anchor=tk.CENTER)
-        bezel = tk.Frame(card, bg=BORDER, padx=1, pady=1)
-        bezel.pack()
-        body = tk.Frame(bezel, bg=SURFACE, padx=28, pady=22)
-        body.pack()
+        body.configure(padx=28, pady=22)
 
         tk.Label(
             body, text=f"$ {title.lower()}", bg=SURFACE, fg=MUTED, font=(FONT, 9)
@@ -492,12 +685,9 @@ class LoadingOverlay(tk.Frame):
         dim = tk.Frame(self, bg="#010502")
         dim.place(relx=0, rely=0, relwidth=1, relheight=1)
 
-        card = tk.Frame(self, bg=GREEN_DARK, padx=2, pady=2)
+        card, body = phosphor_shell(self, content_bg=SURFACE)
         card.place(relx=0.5, rely=0.5, anchor=tk.CENTER)
-        bezel = tk.Frame(card, bg=BORDER, padx=1, pady=1)
-        bezel.pack()
-        body = tk.Frame(bezel, bg=SURFACE, padx=36, pady=28)
-        body.pack()
+        body.configure(padx=36, pady=28)
 
         row = tk.Frame(body, bg=SURFACE)
         row.pack()
@@ -517,6 +707,9 @@ class LoadingOverlay(tk.Frame):
         )
         self._bar.pack(pady=(18, 0))
         self._tick()
+
+    def set_message(self, message: str) -> None:
+        self._label.configure(text=message)
 
     def _tick(self) -> None:
         self._phase += 1
@@ -553,6 +746,7 @@ class TerminalScrollbar(tk.Canvas):
         self._thumb = (0, 0)
         self._phase = 0
         self._job: str | None = None
+        self._paused = False
         self.bind("<Configure>", lambda _e: self._redraw())
         self.bind("<ButtonPress-1>", self._on_press)
         self.bind("<B1-Motion>", self._on_drag)
@@ -561,6 +755,19 @@ class TerminalScrollbar(tk.Canvas):
         self.bind("<Leave>", self._on_leave)
         self.bind("<MouseWheel>", self._on_wheel)
         self._tick()
+
+    def pause(self) -> None:
+        self._paused = True
+        if self._job is not None:
+            self.after_cancel(self._job)
+            self._job = None
+
+    def resume(self) -> None:
+        if not self._paused:
+            return
+        self._paused = False
+        if self._job is None:
+            self._job = self.after(120, self._tick)
 
     def set(self, first: float | str, last: float | str) -> None:
         self._first = max(0.0, min(1.0, float(first)))
@@ -625,12 +832,16 @@ class TerminalScrollbar(tk.Canvas):
             )
 
     def _tick(self) -> None:
+        self._job = None
+        if self._paused:
+            return
         self._phase += 1
         if self._hover:
             self._redraw()
         self._job = self.after(120, self._tick)
 
     def stop(self) -> None:
+        self._paused = True
         if self._job is not None:
             self.after_cancel(self._job)
             self._job = None
@@ -680,21 +891,24 @@ class UntraceGui(tk.Tk):
         super().__init__()
         self.title("untrace")
         self.minsize(540, 480)
-        self.geometry("580x720")
+        self.configure(bg=GREEN)
+        self.geometry("960x700")
         self.state("zoomed")
-        self.configure(bg=BG)
         self._busy = False
         self._refreshing = False
         self._loading: LoadingOverlay | None = None
         self._snapshot: dict | None = None
         self._effects: list = []
         self._hero_edge: tk.Frame | None = None
+        self._icon_images: list[tk.PhotoImage] = []
+        self._resizing = False
+        self._resize_job: str | None = None
+        self._last_size = (0, 0)
+        self._apply_window_icon()
 
-        outer = tk.Frame(self, bg=GREEN_DARK, padx=2, pady=2)
-        outer.pack(fill=tk.BOTH, expand=True)
-        bezel = tk.Frame(outer, bg=BORDER, padx=1, pady=1)
-        bezel.pack(fill=tk.BOTH, expand=True)
-        shell = tk.Frame(bezel, bg=BG)
+        border = tk.Frame(self, bg=GREEN, padx=1, pady=1)
+        border.pack(fill=tk.BOTH, expand=True)
+        shell = tk.Frame(border, bg=BG)
         shell.pack(fill=tk.BOTH, expand=True)
 
         self._canvas = tk.Canvas(shell, bg=BG, highlightthickness=0, borderwidth=0)
@@ -712,6 +926,7 @@ class UntraceGui(tk.Tk):
         self._canvas.bind("<Configure>", self._on_canvas_configure)
         self.bind("<Enter>", self._grab_wheel)
         self.bind("<Leave>", self._release_wheel)
+        self.bind("<Configure>", self._on_root_configure)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
         rule = GreenRule(self._body)
@@ -748,7 +963,7 @@ class UntraceGui(tk.Tk):
         rule2.pack(fill=tk.X, pady=(14, 16))
 
         hero = tk.Frame(
-            self._body, bg=SURFACE, highlightthickness=1, highlightbackground=BORDER
+            self._body, bg=SURFACE, highlightthickness=1, highlightbackground=MUTED
         )
         hero.pack(fill=tk.X, pady=(0, 8))
         self._hero_edge = tk.Frame(hero, bg=GREEN, width=4)
@@ -826,14 +1041,113 @@ class UntraceGui(tk.Tk):
         self.refresh_status()
 
     def _show_loading(self, message: str) -> None:
+        self._set_effects_paused(True)
         if self._loading is not None:
-            self._loading.close()
+            self._loading.set_message(message)
+            self._loading.lift()
+            return
         self._loading = LoadingOverlay(self, message)
 
     def _hide_loading(self) -> None:
         if self._loading is not None:
             self._loading.close()
             self._loading = None
+
+    def _finish_ui_busy(self) -> None:
+        def resume() -> None:
+            try:
+                self.update_idletasks()
+            except tk.TclError:
+                return
+            self._set_effects_paused(False)
+
+        self.after(120, resume)
+
+    def _keep_image(self, image: tk.PhotoImage) -> tk.PhotoImage:
+        self._icon_images.append(image)
+        return image
+
+    def _load_photo(
+        self, path: Path, *, subsample: int | None = None
+    ) -> tk.PhotoImage | None:
+        if not path.is_file():
+            return None
+        try:
+            image = tk.PhotoImage(file=str(path))
+        except tk.TclError:
+            return None
+        if subsample and subsample > 1:
+            image = image.subsample(subsample, subsample)
+        return self._keep_image(image)
+
+    def _apply_window_icon(self) -> None:
+        if ICON_ICO.is_file():
+            try:
+                self.iconbitmap(default=str(ICON_ICO.resolve()))
+            except tk.TclError:
+                pass
+        photo = self._load_photo(ICON_PNG) or self._load_photo(
+            ASSETS_DIR / "icon-128.png"
+        )
+        if photo is not None:
+            try:
+                self.iconphoto(True, photo)
+            except tk.TclError:
+                pass
+
+    def _set_effects_paused(self, paused: bool) -> None:
+        for effect in self._effects:
+            method = getattr(effect, "pause" if paused else "resume", None)
+            if callable(method):
+                method()
+        cards = getattr(self, "cards", None)
+        if cards is None:
+            return
+        for card in cards.winfo_children():
+            dot = getattr(card, "_dot", None)
+            if dot is None:
+                continue
+            method = getattr(dot, "pause" if paused else "resume", None)
+            if callable(method):
+                method()
+
+    def _begin_resize(self) -> None:
+        if self._resizing or self._loading is not None:
+            return
+        self._resizing = True
+        self._set_effects_paused(True)
+
+    def _schedule_end_resize(self) -> None:
+        if self._resize_job is not None:
+            self.after_cancel(self._resize_job)
+        self._resize_job = self.after(150, self._end_resize)
+
+    def _end_resize(self) -> None:
+        self._resize_job = None
+        if not self._resizing:
+            return
+        self._resizing = False
+        try:
+            self._on_body_configure()
+            self._canvas.itemconfigure(self._body_id, width=self._canvas.winfo_width())
+        except tk.TclError:
+            pass
+        self._finish_ui_busy()
+
+    def _on_root_configure(self, event) -> None:
+        if event.widget is not self:
+            return
+        size = (event.width, event.height)
+        if size == self._last_size:
+            return
+        prev = self._last_size
+        self._last_size = size
+        if prev == (0, 0):
+            return
+        if self._loading is not None:
+            return
+        self._begin_resize()
+        self._schedule_end_resize()
 
     def _on_close(self) -> None:
         self._release_wheel()
@@ -855,9 +1169,13 @@ class UntraceGui(tk.Tk):
         return "break"
 
     def _on_body_configure(self, _event=None) -> None:
+        if self._resizing:
+            return
         self._canvas.configure(scrollregion=self._canvas.bbox("all"))
 
     def _on_canvas_configure(self, event) -> None:
+        if self._resizing:
+            return
         self._canvas.itemconfigure(self._body_id, width=event.width)
 
     def _clear_cards(self) -> None:
@@ -935,7 +1253,7 @@ class UntraceGui(tk.Tk):
         threading.Thread(target=worker, daemon=True).start()
 
     def _refresh_done(self, snapshot: dict | None, failed: bool) -> None:
-        self._hide_loading()
+        self._set_effects_paused(True)
         self._refreshing = False
         callback = getattr(self, "_refresh_on_done", None)
         self._refresh_on_done = None
@@ -951,10 +1269,22 @@ class UntraceGui(tk.Tk):
                 )
                 self.uninstall_btn.set_enabled(False)
                 self.refresh_btn.set_enabled(True)
+            try:
+                self.update_idletasks()
+            except tk.TclError:
+                pass
+            self._hide_loading()
+            self._finish_ui_busy()
             if callback is not None:
                 callback()
             return
         self._render(snapshot)
+        try:
+            self.update_idletasks()
+        except tk.TclError:
+            pass
+        self._hide_loading()
+        self._finish_ui_busy()
         if callback is not None:
             callback()
 
@@ -1016,7 +1346,6 @@ class UntraceGui(tk.Tk):
         threading.Thread(target=worker, daemon=True).start()
 
     def _done(self, action: str, label: str, code: int, err: str) -> None:
-        self._hide_loading()
         self._set_busy(False)
 
         def after_status() -> None:

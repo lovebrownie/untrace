@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import platform
 import sys
 from pathlib import Path
 
@@ -40,6 +41,15 @@ def version_tag(version: str | None = None) -> str:
 
 def gui_exe_name(version: str | None = None) -> str:
     return f"Untrace-{version_tag(version)}"
+
+
+def gui_artifact_name(version: str | None = None) -> str:
+    if sys.platform == "win32":
+        return f"Untrace-{version_tag(version)}-Setup.exe"
+    ver = (version or __version__).lstrip("vV")
+    machine = platform.machine().lower()
+    arch = "arm64" if machine in ("aarch64", "arm64") else "amd64"
+    return f"untrace_{ver}_{arch}.deb"
 
 
 def extension_zip_name(version: str | None = None) -> str:

@@ -1,9 +1,14 @@
 [project]
 name = "untrace"
 version = "0.1.0"
-description = "Add your description here"
+description = "Chrome stealth install manager — harder-to-detect automation"
 readme = "README.md"
 requires-python = ">=3.14,<4.0"
+license = "MIT"
+authors = [
+    { name = "lovebrownie" },
+]
+keywords = ["chrome", "selenium", "stealth", "automation"]
 dependencies = ["taskipy (>=1.14.1,<2.0.0)"]
 
 [dependency-groups]
@@ -29,6 +34,6 @@ known-first-party = ["untrace"]
 lint = { cmd = "ruff format untrace/ tests/ && ruff check --fix untrace/ tests/", help = "Format and lint with Ruff" }
 lint-check = { cmd = "ruff format --check untrace/ tests/ && ruff check untrace/ tests/", help = "Verify formatting and lint without fixing" }
 gui = { cmd = "python -m untrace --gui", help = "Open the install/uninstall GUI" }
-build = { cmd = "python -m untrace --build", help = "Build Untrace binary + extension zip into dist/" }
-build-gui = { cmd = "python scripts/build_gui.py", help = "Build Untrace binary only into dist/" }
+build = { cmd = "python -m untrace --build", help = "Build Untrace installer (.exe Setup / .deb) + extension zip into dist/" }
+build-gui = { cmd = "python scripts/build_gui.py", help = "Build Untrace installer (.exe Setup / .deb) only into dist/" }
 pack-extension = { cmd = "python -m untrace --pack-extension", help = "Pack untrace-injector-vX.Y.Z.zip into dist/" }

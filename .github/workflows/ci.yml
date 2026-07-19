@@ -87,7 +87,12 @@ jobs:
             tcl-dev \
             tk-dev \
             libx11-dev \
-            libxext-dev
+            libxext-dev \
+            dpkg
+
+      - name: Install Inno Setup
+        if: runner.os == 'Windows'
+        run: choco install innosetup -y
 
       - name: Resolve version
         id: ver

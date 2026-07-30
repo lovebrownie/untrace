@@ -947,6 +947,14 @@ def extension_id_from_public_key(public_key_b64: str) -> str:
     )
 
 
+def extension_id_from_path(path: Path) -> str:
+    digest = hashlib.sha256(str(path.resolve()).encode()).digest()
+    return "".join(
+        chr(ord("a") + (digest[i] >> 4)) + chr(ord("a") + (digest[i] & 0x0F))
+        for i in range(16)
+    )
+
+
 def extension_settings_entry(ext_id: str, manifest: dict, dest: Path) -> dict:
     install_time = str(int(time.time() * 1_000_000))
     return {
@@ -960,52 +968,83 @@ def extension_settings_entry(ext_id: str, manifest: dict, dest: Path) -> dict:
     }
 
 
-def seed(profile_dir: str) -> None:
-    profile = Path(profile_dir)
-    config_path = UNTRACE_ROOT / "config.json"
-    if config_path.is_file():
-        try:
-            cfg = json.loads(config_path.read_text())
-        except Exception:
-            cfg = {}
-        if not cfg.get("js_injection", True):
-            return
+def _load_prefs(profile: Path) -> dict:
+    prefs_path = profile / "Default" / "Preferences"
+    if not prefs_path.is_file():
+        return {}
+    try:
+        return json.loads(prefs_path.read_text())
+    except Exception:
+        return {}
 
-    manifest_path = EXTENSION_DIR / "manifest.json"
+
+def _write_prefs(profile: Path, prefs: dict) -> None:
+    prefs_path = profile / "Default" / "Preferences"
+    prefs_path.parent.mkdir(parents=True, exist_ok=True)
+    prefs_path.write_text(json.dumps(prefs, indent=2))
+
+
+def install_unpacked(profile: Path, prefs: dict, src: Path) -> bool:
+    src = src.resolve()
+    manifest_path = src / "manifest.json"
     if not manifest_path.is_file():
-        return
+        return False
+    try:
+        manifest = json.loads(manifest_path.read_text())
+    except Exception:
+        return False
 
-    manifest = json.loads(manifest_path.read_text())
-    ext_id = extension_id_from_public_key(manifest["key"])
-    ver = manifest["version"]
+    if "key" in manifest:
+        ext_id = extension_id_from_public_key(manifest["key"])
+    else:
+        ext_id = extension_id_from_path(src)
+
+    ver = str(manifest.get("version", "0.0.0.0"))
     dest = profile / "Default" / "Extensions" / ext_id / ver
     dest.parent.mkdir(parents=True, exist_ok=True)
     if dest.exists():
         shutil.rmtree(dest)
-    shutil.copytree(EXTENSION_DIR, dest)
-
-    prefs_path = profile / "Default" / "Preferences"
-    prefs: dict = {}
-    if prefs_path.is_file():
-        try:
-            prefs = json.loads(prefs_path.read_text())
-        except Exception:
-            prefs = {}
+    shutil.copytree(src, dest)
 
     extensions = prefs.setdefault("extensions", {})
     extensions.setdefault("ui", {})["developer_mode"] = True
     extensions.setdefault("settings", {})[ext_id] = extension_settings_entry(
         ext_id, manifest, dest
     )
-    prefs_path.parent.mkdir(parents=True, exist_ok=True)
-    prefs_path.write_text(json.dumps(prefs, indent=2))
+    return True
+
+
+def seed(profile_dir: str, *extra_extension_dirs: str) -> None:
+    profile = Path(profile_dir)
+    prefs = _load_prefs(profile)
+    changed = False
+
+    config_path = UNTRACE_ROOT / "config.json"
+    cfg: dict = {}
+    if config_path.is_file():
+        try:
+            cfg = json.loads(config_path.read_text())
+        except Exception:
+            cfg = {}
+
+    if cfg.get("js_injection", True) and (EXTENSION_DIR / "manifest.json").is_file():
+        if install_unpacked(profile, prefs, EXTENSION_DIR):
+            changed = True
+
+    for extra in extra_extension_dirs:
+        src = Path(extra)
+        if src.is_dir() and install_unpacked(profile, prefs, src):
+            changed = True
+
+    if changed:
+        _write_prefs(profile, prefs)
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
+    if len(sys.argv) < 2:
         sys.exit(2)
     try:
-        seed(sys.argv[1])
+        seed(sys.argv[1], *sys.argv[2:])
     except Exception as exc:
         print(f"[untrace] seed_profile failed: {exc}", file=sys.stderr)
         sys.exit(1)

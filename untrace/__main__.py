@@ -306,10 +306,11 @@ _resolve_untrace_root() {
 _seed_untrace_extension() {
   local pdir="$1"
   local root
+  shift
   [ -n "$pdir" ] || return 0
   root="$(_resolve_untrace_root)"
   mkdir -p "$pdir"
-  "$root/seed_profile.py" "$pdir" || true
+  "$root/seed_profile.py" "$pdir" "$@" || true
 }
 """
 
@@ -351,6 +352,37 @@ for arg in "$@"; do
 done
 """
 
+PARSE_LOAD_EXTENSION_BASH = """
+_untrace_load_extensions=()
+_untrace_load_ext_prev=""
+_untrace_collect_load_extension_paths() {
+  local csv="$1" part
+  local -a parts=()
+  IFS=',' read -r -a parts <<< "$csv"
+  for part in "${parts[@]}"; do
+    part="${part#"${part%%[![:space:]]*}"}"
+    part="${part%"${part##*[![:space:]]}"}"
+    [ -n "$part" ] || continue
+    _untrace_load_extensions+=("$part")
+  done
+}
+for arg in "$@"; do
+  if [ "$_untrace_load_ext_prev" = "--load-extension" ]; then
+    _untrace_collect_load_extension_paths "$arg"
+    _untrace_load_ext_prev=""
+    continue
+  fi
+  case "$arg" in
+    --load-extension=*)
+      _untrace_collect_load_extension_paths "${arg#--load-extension=}"
+      ;;
+    --load-extension)
+      _untrace_load_ext_prev="--load-extension"
+      ;;
+  esac
+done
+"""
+
 RANDOM_DIR_BASH = """
 RANDOM_DIR="$(mktemp -d /tmp/chrome_random_profiles/profile_XXXXXXXXXX 2>/dev/null || echo "/tmp/chrome_random_profiles/profile_$(date +%s%N | sha256sum | cut -c1-16)")"
 mkdir -p "$RANDOM_DIR"
@@ -369,16 +401,45 @@ def _chromedriver_strip_case_pattern() -> str:
     return "|".join(arms)
 
 
-STRIP_AUTOMATION_ARGS_BASH = f"""
+def _strip_automation_args_bash(*, protect_extensions: bool = True) -> str:
+    extension_cases = ""
+    if protect_extensions:
+        extension_cases = """
+    --disable-extensions)
+      continue
+      ;;
+    --disable-extensions-except)
+      _untrace_skip_next=1
+      continue
+      ;;
+    --disable-extensions-except=*)
+      continue
+      ;;"""
+    return f"""
 _untrace_filtered=()
+_untrace_disable_features=()
 _untrace_skip_next=0
+_untrace_skip_is_disable_features=0
 for arg in "$@"; do
   if [ "$_untrace_skip_next" = "1" ]; then
     _untrace_skip_next=0
+    if [ "$_untrace_skip_is_disable_features" = "1" ]; then
+      _untrace_skip_is_disable_features=0
+      _untrace_add_disable_features "$arg"
+    fi
     continue
   fi
   case "$arg" in
     {_chromedriver_strip_case_pattern()})
+      continue
+      ;;
+    --disable-features=*)
+      _untrace_add_disable_features "${{arg#--disable-features=}}"
+      continue
+      ;;
+    --disable-features)
+      _untrace_skip_next=1
+      _untrace_skip_is_disable_features=1
       continue
       ;;
     --disable-blink-features)
@@ -396,10 +457,56 @@ for arg in "$@"; do
     --log-level)
       _untrace_skip_next=1
       continue
-      ;;
+      ;;{extension_cases}
   esac
   _untrace_filtered+=("$arg")
 done
+"""
+
+
+MERGE_DISABLE_FEATURES_BASH = """
+_untrace_add_disable_features() {
+  local csv="$1" feat seen f
+  local -a feats=()
+  IFS=',' read -r -a feats <<< "$csv"
+  for feat in "${feats[@]}"; do
+    feat="${feat#"${feat%%[![:space:]]*}"}"
+    feat="${feat%"${feat##*[![:space:]]}"}"
+    [ -n "$feat" ] || continue
+    case "$feat" in
+      IgnoreDuplicateNavs|Prewarm) continue ;;
+    esac
+    seen=0
+    for f in "${_untrace_disable_features[@]}"; do
+      if [ "$f" = "$feat" ]; then
+        seen=1
+        break
+      fi
+    done
+    [ "$seen" = "0" ] || continue
+    _untrace_disable_features+=("$feat")
+  done
+}
+
+_untrace_merge_disable_features() {
+  local out=() line joined
+  _untrace_add_disable_features "DisableLoadExtensionCommandLineSwitch"
+  for line in "${_untrace_launch_flags[@]}"; do
+    case "$line" in
+      --disable-features=*)
+        _untrace_add_disable_features "${line#--disable-features=}"
+        ;;
+      *)
+        out+=("$line")
+        ;;
+    esac
+  done
+  _untrace_launch_flags=("${out[@]}")
+  if [ "${#_untrace_disable_features[@]}" -gt 0 ]; then
+    joined=$(IFS=,; printf '%s' "${_untrace_disable_features[*]}")
+    _untrace_filtered+=("--disable-features=$joined")
+  fi
+}
 """
 
 
@@ -416,6 +523,8 @@ def build_chrome_wrapper_script(
     chrome_real: str | None = None,
     random_profile: bool = False,
 ) -> str:
+    strip_args = _strip_automation_args_bash(protect_extensions=True)
+
     if chrome_real is None:
         chrome_real_line = (
             f'CHROME_REAL="$(dirname "$(readlink -f "$0")")/{CHROME_REAL_NAME}"'
@@ -425,8 +534,9 @@ def build_chrome_wrapper_script(
 
     if random_profile:
         manual_branch = f"""{RANDOM_DIR_BASH}
-{STRIP_AUTOMATION_ARGS_BASH}
+{strip_args}
   _read_launch_flags
+  _untrace_merge_disable_features
   exec -a "$0" "${{_untrace_runner[@]}}" "${{_untrace_filtered[@]}}" --user-data-dir="$RANDOM_DIR" "${{_untrace_headless_extras[@]}}" "${{_untrace_launch_flags[@]}}" """
     else:
         manual_branch = """  _seed_untrace_extension "${HOME}/.config/google-chrome"
@@ -440,14 +550,17 @@ def build_chrome_wrapper_script(
 {UNTRACE_BEGIN}
 {SEED_EXTENSION_BASH}
 {READ_LAUNCH_FLAGS_BASH}
+{MERGE_DISABLE_FEATURES_BASH}
 {AUTOMATION_DETECT_BASH}
 {HEADLESS_DETECT_BASH}
 {CHROME_RUNNER_BASH}
 if [ "$UNTRACE_AUTOMATION" = "1" ]; then
 {PARSE_USER_DATA_DIR_BASH}
-  _seed_untrace_extension "$_untrace_user_data_dir"
-{STRIP_AUTOMATION_ARGS_BASH}
+{PARSE_LOAD_EXTENSION_BASH}
+  _seed_untrace_extension "$_untrace_user_data_dir" "${{_untrace_load_extensions[@]}}"
+{strip_args}
   _read_launch_flags
+  _untrace_merge_disable_features
   exec -a "$0" "${{_untrace_runner[@]}}" "${{_untrace_filtered[@]}}" "${{_untrace_headless_extras[@]}}" "${{_untrace_launch_flags[@]}}"
 else
 {manual_branch}
@@ -887,6 +1000,7 @@ class ChromeWrapper
     static readonly string ExtId = "__EXT_ID__";
     static readonly string TemplateDir = @"__TEMPLATE_DIR__";
     const int WarmupMs = 15000;
+    static readonly List<string> DisableFeatures = new List<string>();
 
     // Kill chrome_real when chromedriver kills this wrapper.
     static class KillOnCloseJob
@@ -1011,7 +1125,66 @@ class ChromeWrapper
     {
         return arg == "--disable-blink-features"
             || arg == "--test-type"
-            || arg == "--log-level";
+            || arg == "--log-level"
+            || arg == "--disable-extensions-except";
+    }
+
+    static void AddDisableFeatures(string csv)
+    {
+        if (string.IsNullOrEmpty(csv))
+            return;
+        string[] parts = csv.Split(',');
+        for (int i = 0; i < parts.Length; i++)
+        {
+            string feat = parts[i].Trim();
+            if (feat.Length == 0)
+                continue;
+            if (feat == "IgnoreDuplicateNavs" || feat == "Prewarm")
+                continue;
+            bool seen = false;
+            for (int j = 0; j < DisableFeatures.Count; j++)
+            {
+                if (DisableFeatures[j] == feat)
+                {
+                    seen = true;
+                    break;
+                }
+            }
+            if (!seen)
+                DisableFeatures.Add(feat);
+        }
+    }
+
+    static void CollectDisableFeaturesArg(string arg)
+    {
+        if (arg.StartsWith("--disable-features="))
+            AddDisableFeatures(arg.Substring("--disable-features=".Length));
+    }
+
+    static void MergeDisableFeatures(List<string> args)
+    {
+        for (int i = args.Count - 1; i >= 0; i--)
+        {
+            string arg = args[i];
+            if (arg.StartsWith("--disable-features="))
+            {
+                CollectDisableFeaturesArg(arg);
+                args.RemoveAt(i);
+                continue;
+            }
+            if (arg == "--disable-features")
+            {
+                if (i + 1 < args.Count)
+                {
+                    AddDisableFeatures(args[i + 1]);
+                    args.RemoveAt(i + 1);
+                }
+                args.RemoveAt(i);
+            }
+        }
+        AddDisableFeatures("DisableLoadExtensionCommandLineSwitch");
+        if (DisableFeatures.Count > 0)
+            args.Add("--disable-features=" + string.Join(",", DisableFeatures));
     }
 
     static List<string> FilterArgs(string[] args)
@@ -1020,6 +1193,20 @@ class ChromeWrapper
         for (int i = 0; i < args.Length; i++)
         {
             string arg = args[i];
+            if (arg.StartsWith("--disable-features="))
+            {
+                CollectDisableFeaturesArg(arg);
+                continue;
+            }
+            if (arg == "--disable-features")
+            {
+                if (i + 1 < args.Length)
+                {
+                    i++;
+                    AddDisableFeatures(args[i]);
+                }
+                continue;
+            }
             if (ShouldStrip(arg)) continue;
             if (TakesSeparateValue(arg))
             {
@@ -1398,6 +1585,8 @@ class ChromeWrapper
         for (int i = 0; i < ExtraFlags.Length; i++)
             finalArgs.Add(ExtraFlags[i]);
 
+        MergeDisableFeatures(finalArgs);
+
         string userDataDir = profileDir ?? FindUserDataDir(finalArgs);
         if (ServeStealth && !string.IsNullOrEmpty(userDataDir))
             EnsureWarmedProfile(userDataDir, automation);
@@ -1628,11 +1817,13 @@ def build_wrapper_source(real_exe_path: str, *, random_profile: bool = False) ->
     cfg_flags = chrome_launch_flags()
     # Windows: keep --enable-automation (required with remote-debugging-port).
     strip_exact = [f for f in CHROMEDRIVER_STRIP_FLAGS if f != "--enable-automation"]
-    strip_prefixes = (
+    strip_exact.append("--disable-extensions")
+    strip_prefixes = [
         "--disable-blink-features=",
         "--log-level=",
         "--test-type=",
-    )
+        "--disable-extensions-except=",
+    ]
     serve_stealth = bool(cfg.get("js_injection", True)) and IS_WINDOWS
     template_dir = str(
         injector.SYSTEM_UNTRACE_ROOT / "chrome_profile_template"

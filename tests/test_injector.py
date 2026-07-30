@@ -228,6 +228,51 @@ def test_seed_extension_into_profile(temp_untrace):
     assert prefs["extensions"]["ui"]["developer_mode"] is True
 
 
+@_linux_only
+def test_seed_profile_script_seeds_extra_load_extension_paths(temp_untrace, tmp_path):
+    import base64
+    import hashlib
+    import subprocess
+
+    root, _, _ = temp_untrace
+    injector.setup(list(DEFAULT_CHROME_SCRIPTS), CHROME_SCRIPTS)
+
+    # minimal RSA-looking key material is not required — use a valid b64 blob
+    key_bytes = b"\x00" * 162
+    key_b64 = base64.b64encode(key_bytes).decode()
+    extra = tmp_path / "nopecha"
+    extra.mkdir()
+    (extra / "manifest.json").write_text(
+        json.dumps(
+            {
+                "name": "NopeCHA",
+                "version": "0.6.1",
+                "manifest_version": 3,
+                "key": key_b64,
+            }
+        )
+    )
+
+    profile = tmp_path / "profile"
+    script = root / "seed_profile.py"
+    subprocess.run(
+        [sys.executable, str(script), str(profile), str(extra)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    digest = hashlib.sha256(key_bytes).digest()
+    extra_id = "".join(
+        chr(ord("a") + (digest[i] >> 4)) + chr(ord("a") + (digest[i] & 0x0F))
+        for i in range(16)
+    )
+    prefs = json.loads((profile / "Default" / "Preferences").read_text())
+    assert injector.extension_id() in prefs["extensions"]["settings"]
+    assert extra_id in prefs["extensions"]["settings"]
+    assert (profile / "Default" / "Extensions" / extra_id / "0.6.1").is_dir()
+
+
 def test_pack_extension_zip_for_webstore(temp_untrace, tmp_path):
     out = tmp_path / "untrace-injector.zip"
     path = injector.pack_extension_zip(

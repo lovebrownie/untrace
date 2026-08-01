@@ -645,22 +645,31 @@ def _selenium_manager_patch_active() -> bool:
 
 
 def _apply_chromedriver_patch(cfg: dict) -> None:
+    from untrace import applog
+
     if cfg.get("chromedriver_patch", True):
         patched = chromedriver.patch_all_chromedrivers()
         if patched:
-            print(f"Patched {len(patched)} chromedriver binary(s).")
+            applog.write(f"Patched {len(patched)} chromedriver binary(s): {patched}")
         if not IS_WINDOWS:
             sm_patched = selenium.patch_all_selenium_managers()
             if sm_patched:
-                print(f"Patched {len(sm_patched)} selenium-manager binary(s).")
+                applog.write(
+                    f"Patched {len(sm_patched)} selenium-manager binary(s): {sm_patched}"
+                )
     else:
         unpatched = chromedriver.unpatch_all_chromedrivers()
         if unpatched:
-            print(f"Unpatched {len(unpatched)} chromedriver binary(s).")
+            applog.write(
+                f"Unpatched {len(unpatched)} chromedriver binary(s): {unpatched}"
+            )
         if not IS_WINDOWS:
             sm_unpatched = selenium.unpatch_all_selenium_managers()
             if sm_unpatched:
-                print(f"Unpatched {len(sm_unpatched)} selenium-manager binary(s).")
+                applog.write(
+                    f"Unpatched {len(sm_unpatched)} selenium-manager binary(s): "
+                    f"{sm_unpatched}"
+                )
 
 
 def _disable_stealth_at_roots(cfg: dict, roots: list[Path]) -> None:
@@ -684,13 +693,13 @@ def _print_active_features(cfg: dict | None = None) -> None:
     flags_enabled = bool(cfg.get("chrome_flags", True)) and wrapper_enabled
     chromedriver_enabled = _chromedriver_patch_active()
     ok, bad = "OK", "OFF"
-    print(f"{ok if _effective_stealth_active() else bad} Stealth")
-    print(f"{ok if flags_enabled else bad} Flags")
-    print(f"{ok if wrapper_enabled else bad} Chrome wrapper")
-    print(f"{ok if chromedriver_enabled else bad} Chromedriver patch")
+    print(f"{ok if _effective_stealth_active() else bad} Stealth extension")
+    print(f"{ok if flags_enabled else bad} Random profiles")
+    print(f"{ok if wrapper_enabled else bad} Chrome launch wrapper")
+    print(f"{ok if chromedriver_enabled else bad} Chromedriver CDC patch")
     if not IS_WINDOWS:
         selenium_manager_enabled = _selenium_manager_patch_active()
-        print(f"{ok if selenium_manager_enabled else bad} Selenium-manager patch")
+        print(f"{ok if selenium_manager_enabled else bad} Selenium-manager redirect")
 
 
 def gui_status() -> dict:
@@ -704,10 +713,14 @@ def gui_status() -> dict:
     stealth_on = _effective_stealth_active()
     chromedriver_on = _chromedriver_patch_active()
     features = [
-        {"id": "stealth", "label": "Anti-detection", "on": stealth_on},
-        {"id": "flags", "label": "Clean profiles", "on": flags_on},
-        {"id": "wrapper", "label": "Browser", "on": wrapper_on},
-        {"id": "chromedriver", "label": "Automation", "on": chromedriver_on},
+        {"id": "stealth", "label": "Stealth extension", "on": stealth_on},
+        {"id": "flags", "label": "Random profiles", "on": flags_on},
+        {"id": "wrapper", "label": "Chrome launch wrapper", "on": wrapper_on},
+        {
+            "id": "chromedriver",
+            "label": "Chromedriver CDC patch",
+            "on": chromedriver_on,
+        },
     ]
     any_on = any(f["on"] for f in features)
     return {
@@ -732,7 +745,8 @@ def _installed_wrapper_stale() -> list[str]:
     if "_read_launch_flags" not in content:
         issues.append(
             "system Chrome wrapper is stale (missing dynamic launch.flags); "
-            "re-run: sudo python -m untrace --install --stealth --flags --chromedriver"
+            "re-run: sudo python -m untrace --install "
+            "--stealth-extension --launch-wrapper --chromedriver-cdc"
         )
 
     for line in content.splitlines():
@@ -747,26 +761,27 @@ def _installed_wrapper_stale() -> list[str]:
 
 
 def status_linux():
-    print("Patched" if is_chrome_wrapped_linux() else "Not patched")
-    print(f"Active untrace root: {injector.get_untrace_root()}")
-    print()
-    _print_active_features()
+    from untrace import applog
+
+    applog.write(
+        f"status: wrapped={is_chrome_wrapped_linux()} "
+        f"root={injector.get_untrace_root()}"
+    )
     for issue in _installed_wrapper_stale():
-        print(f"Warning: {issue}")
-    if not is_chrome_wrapped_linux():
-        print("Hint: run once with sudo: python -m untrace --install --stealth --flags")
+        applog.write(f"status: warning: {issue}")
+    _print_active_features()
 
 
 def _resolve_install_config(
     *,
-    stealth: bool = False,
-    flags: bool = False,
-    chromedriver: bool = False,
+    stealth_extension: bool = False,
+    launch_wrapper: bool = False,
+    chromedriver_cdc: bool = False,
 ) -> dict:
     cfg = config.resolve_install_features(
-        stealth=stealth,
-        flags=flags,
-        chromedriver=chromedriver,
+        stealth_extension=stealth_extension,
+        launch_wrapper=launch_wrapper,
+        chromedriver_cdc=chromedriver_cdc,
     )
     config.save(cfg)
     return cfg
@@ -813,12 +828,17 @@ def _refresh_user_wrappers(cfg: dict, launch_flags: list[str]) -> None:
 
 
 def install_linux(
-    *, stealth: bool = False, flags: bool = False, chromedriver: bool = False
+    *,
+    stealth_extension: bool = False,
+    launch_wrapper: bool = False,
+    chromedriver_cdc: bool = False,
 ):
     injector.use_system_root()
     try:
         cfg = _resolve_install_config(
-            stealth=stealth, flags=flags, chromedriver=chromedriver
+            stealth_extension=stealth_extension,
+            launch_wrapper=launch_wrapper,
+            chromedriver_cdc=chromedriver_cdc,
         )
         _sync_config_to_managed_roots(cfg)
 
@@ -845,13 +865,20 @@ def install_linux(
         _refresh_user_wrappers(cfg, launch_flags)
         _apply_chromedriver_patch(cfg)
 
+        from untrace import applog
+
+        applog.write(
+            "install: stealth="
+            f"{cfg.get('js_injection')} flags={cfg.get('chrome_flags')} "
+            f"wrapper={cfg.get('chrome_wrapper')} "
+            f"chromedriver={cfg.get('chromedriver_patch')}"
+        )
         print()
         _print_active_features(cfg)
         if cfg.get("js_injection", True) and not injector.is_installed():
-            print(
-                "Warning: extension files missing under /etc/untrace after install.",
-                file=sys.stderr,
-            )
+            msg = "Warning: extension files missing under /etc/untrace after install."
+            applog.write(f"install: {msg}")
+            print(msg, file=sys.stderr)
     finally:
         injector.clear_untrace_root_override()
 
@@ -859,7 +886,9 @@ def install_linux(
 def _untrace_present() -> bool:
     if is_chrome_wrapped_linux() or backup_path_linux().is_file():
         return True
-    if any(root.is_dir() for root in injector.user_deploy_roots()):
+    if any(
+        injector.user_deploy_has_payload(root) for root in injector.user_deploy_roots()
+    ):
         return True
     if _chromedriver_patch_active():
         return True
@@ -867,37 +896,49 @@ def _untrace_present() -> bool:
 
 
 def uninstall_linux():
+    from untrace import applog
+
     if not _untrace_present():
-        print("No untrace patch found — nothing to restore.", file=sys.stderr)
-        sys.exit(1)
+        applog.write("uninstall: no untrace patch found — nothing to restore")
+        applog.close()
+        injector.remove_user_deploys()
+        print("Uninstalled")
+        return
 
     injector.use_system_root()
     try:
         if is_chrome_wrapped_linux():
             remove_chrome_binary_wrapper()
+            applog.write("uninstall: removed Chrome binary wrapper")
 
         bpath = backup_path_linux()
         if bpath.is_file():
             shutil.copy2(bpath, CHROME_SCRIPT)
             CHROME_SCRIPT.chmod(0o755)
             bpath.unlink()
+            applog.write(f"uninstall: restored launcher from {bpath}")
 
         restore_google_chrome_launcher()
         injector.remove()
         config.clear()
-
-        removed_deploys = injector.remove_user_deploys()
-        if removed_deploys:
-            paths = ", ".join(str(root) for root in removed_deploys)
-            print(f"Removed user deploy: {paths}")
+        applog.write("uninstall: cleared system extension root and config")
 
         unpatched_drivers = chromedriver.unpatch_all_chromedrivers()
         if unpatched_drivers:
-            print(f"Unpatched {len(unpatched_drivers)} chromedriver(s).")
+            applog.write(
+                f"uninstall: unpatched {len(unpatched_drivers)} chromedriver(s): "
+                f"{unpatched_drivers}"
+            )
         unpatched_managers = selenium.unpatch_all_selenium_managers()
         if unpatched_managers:
-            print(f"Unpatched {len(unpatched_managers)} selenium-manager(s).")
-        print("Uninstalled.")
+            applog.write(
+                f"uninstall: unpatched {len(unpatched_managers)} selenium-manager(s): "
+                f"{unpatched_managers}"
+            )
+        applog.write("uninstall: complete; removing user deploy roots (incl. log)")
+        applog.close()
+        injector.remove_user_deploys()
+        print("Uninstalled")
     finally:
         injector.clear_untrace_root_override()
 
@@ -1927,23 +1968,24 @@ def compile_wrapper(
 
 
 def status_windows():
+    from untrace import applog
+
     chrome_path = find_chrome_windows()
     if not chrome_path:
+        applog.write("status: chrome.exe not found")
         print("chrome.exe not found")
         return
 
     real_exe = Path(chrome_path).parent / REAL_EXE_NAME
-
-    if real_exe.is_file():
-        print("Patched")
-    else:
-        print("Not patched")
-    print()
+    applog.write(f"status: wrapped={real_exe.is_file()} chrome={chrome_path}")
     _print_active_features()
 
 
 def install_windows(
-    *, stealth: bool = False, flags: bool = False, chromedriver: bool = False
+    *,
+    stealth_extension: bool = False,
+    launch_wrapper: bool = False,
+    chromedriver_cdc: bool = False,
 ):
     chrome_path = find_chrome_windows()
     if not chrome_path:
@@ -1955,19 +1997,24 @@ def install_windows(
     chrome = Path(chrome_path)
     real_exe = chrome.parent / REAL_EXE_NAME
 
+    from untrace import applog
+
     cfg = _resolve_install_config(
-        stealth=stealth, flags=flags, chromedriver=chromedriver
+        stealth_extension=stealth_extension,
+        launch_wrapper=launch_wrapper,
+        chromedriver_cdc=chromedriver_cdc,
     )
-    print(
+    sac_warn = (
         "Warning: Smart App Control / WDAC may block the unsigned Chrome wrapper"
         + (
             " or patched chromedriver (WinError 4551)"
             if cfg.get("chromedriver_patch", False)
             else ""
         )
-        + ".",
-        file=sys.stderr,
+        + "."
     )
+    applog.write(f"install: {sac_warn}")
+    print(sac_warn, file=sys.stderr)
     print()
 
     injector.remove()
@@ -1975,12 +2022,14 @@ def install_windows(
     if cfg.get("js_injection", True):
         try:
             injector.register_windows_webstore_extension()
+            applog.write("install: registered Windows Web Store extension")
         except (OSError, RuntimeError) as exc:
-            print(
+            msg = (
                 "Failed to install stealth extension on Windows. "
-                "Run as Administrator and check network access to the Chrome Web Store.",
-                file=sys.stderr,
+                "Run as Administrator and check network access to the Chrome Web Store."
             )
+            applog.write(f"install: {msg} ({exc!r})")
+            print(msg, file=sys.stderr)
             print(exc, file=sys.stderr)
             sys.exit(1)
 
@@ -2031,13 +2080,22 @@ def install_windows(
 
     _apply_chromedriver_patch(cfg)
 
+    applog.write(
+        "install: stealth="
+        f"{cfg.get('js_injection')} flags={cfg.get('chrome_flags')} "
+        f"wrapper={cfg.get('chrome_wrapper')} "
+        f"chromedriver={cfg.get('chromedriver_patch')}"
+    )
     print()
     _print_active_features(cfg)
 
 
 def uninstall_windows():
+    from untrace import applog
+
     chrome_path = find_chrome_windows()
     if not chrome_path:
+        applog.write("uninstall: could not locate chrome.exe")
         print("Error: could not locate chrome.exe", file=sys.stderr)
         sys.exit(1)
 
@@ -2050,7 +2108,9 @@ def uninstall_windows():
         try:
             chrome.unlink()
             real_exe.rename(chrome)
-        except PermissionError:
+            applog.write(f"uninstall: restored {chrome} from {real_exe}")
+        except PermissionError as exc:
+            applog.write(f"uninstall: permission denied restoring chrome: {exc!r}")
             print(
                 "Permission denied. Run as Administrator and close Chrome first.",
                 file=sys.stderr,
@@ -2061,16 +2121,32 @@ def uninstall_windows():
     template = windows_profile_template_dir()
     if template.is_dir():
         shutil.rmtree(template, ignore_errors=True)
+        applog.write(f"uninstall: removed profile template {template}")
     config.clear()
     unpatched_drivers = chromedriver.unpatch_all_chromedrivers()
     if unpatched_drivers:
-        print(f"Unpatched {len(unpatched_drivers)} chromedriver(s).")
-    print("Uninstalled.")
+        applog.write(
+            f"uninstall: unpatched {len(unpatched_drivers)} chromedriver(s): "
+            f"{unpatched_drivers}"
+        )
+    applog.write("uninstall: complete; removing user deploy roots (incl. log)")
+    applog.close()
+    injector.remove_user_deploys()
+    print("Uninstalled")
 
 
-def install(*, stealth: bool = False, flags: bool = False, chromedriver: bool = False):
+def install(
+    *,
+    stealth_extension: bool = False,
+    launch_wrapper: bool = False,
+    chromedriver_cdc: bool = False,
+):
     ensure_privileges()
-    kwargs = {"stealth": stealth, "flags": flags, "chromedriver": chromedriver}
+    kwargs = {
+        "stealth_extension": stealth_extension,
+        "launch_wrapper": launch_wrapper,
+        "chromedriver_cdc": chromedriver_cdc,
+    }
     install_windows(**kwargs) if IS_WINDOWS else install_linux(**kwargs)
 
 
@@ -2116,7 +2192,8 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            "  sudo python3 -m untrace --install --stealth --flags --chromedriver\n"
+            "  sudo python3 -m untrace --install "
+            "--stealth-extension --launch-wrapper --chromedriver-cdc\n"
             "  python -m untrace --build\n"
             "  python -m untrace --pack-extension\n"
             "  pytest tests/test_chromedriver.py"
@@ -2146,22 +2223,25 @@ def main():
     )
     toggles = parser.add_argument_group("features (used with --install)")
     toggles.add_argument(
-        "--stealth",
+        "--stealth-extension",
         action="store_true",
         help=(
-            "enable extension / JS injection "
-            "(Linux: local MV3; Windows: Chrome Web Store force-install)"
+            "MV3 stealth extension (anti-detection scripts); "
+            "Linux: local pack/seed; Windows: Chrome Web Store force-install"
         ),
     )
     toggles.add_argument(
-        "--flags",
+        "--launch-wrapper",
         action="store_true",
-        help="patch Chrome wrapper (launcher flags, random profile for manual launches)",
+        help=(
+            "Chrome launch wrapper + random profiles each launch "
+            "(strips chromedriver junk, applies launcher flags)"
+        ),
     )
     toggles.add_argument(
-        "--chromedriver",
+        "--chromedriver-cdc",
         action="store_true",
-        help="patch chromedriver binaries (neutralize CDC injection)",
+        help="patch chromedriver binaries (neutralize window.cdc_* injection)",
     )
     pack_opts = parser.add_argument_group("build / pack-extension")
     pack_opts.add_argument(
@@ -2194,9 +2274,9 @@ def main():
 
     if args.install:
         install(
-            stealth=args.stealth,
-            flags=args.flags,
-            chromedriver=args.chromedriver,
+            stealth_extension=args.stealth_extension,
+            launch_wrapper=args.launch_wrapper,
+            chromedriver_cdc=args.chromedriver_cdc,
         )
     elif args.uninstall:
         uninstall()

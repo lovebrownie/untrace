@@ -662,13 +662,24 @@ def remove() -> None:
         SEED_PROFILE_SCRIPT.unlink()
 
 
+def user_deploy_has_payload(root: Path) -> bool:
+    if not root.is_dir():
+        return False
+    for path in root.iterdir():
+        if path.name == "untrace.log":
+            continue
+        return True
+    return False
+
+
 def remove_user_deploys() -> list[Path]:
     removed: list[Path] = []
     for root in user_deploy_roots():
         if not root.is_dir():
             continue
-        shutil.rmtree(root)
-        removed.append(root)
+        shutil.rmtree(root, ignore_errors=True)
+        if not root.exists():
+            removed.append(root)
     return removed
 
 

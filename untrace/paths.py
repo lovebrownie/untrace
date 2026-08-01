@@ -17,14 +17,10 @@ SYSTEM_UNTRACE_LINUX = "/etc/untrace"
 def user_home() -> Path:
     if IS_WINDOWS:
         return Path(os.environ.get("USERPROFILE") or Path.home())
-    sudo_user = os.environ.get("SUDO_USER")
-    if sudo_user and hasattr(os, "geteuid") and os.geteuid() == 0:
-        try:
-            import pwd
-
-            return Path(pwd.getpwnam(sudo_user).pw_dir)
-        except (KeyError, ImportError):
-            return Path(f"/home/{sudo_user}")
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        pw = linux_invoking_pw()
+        if pw is not None:
+            return Path(pw.pw_dir)
     return Path.home()
 
 
@@ -48,14 +44,9 @@ def home_dirs_to_search() -> list[Path]:
 
     add(Path.home())
     if not IS_WINDOWS:
-        sudo_user = os.environ.get("SUDO_USER")
-        if sudo_user:
-            try:
-                import pwd
-
-                add(Path(pwd.getpwnam(sudo_user).pw_dir))
-            except (KeyError, ImportError):
-                add(Path(f"/home/{sudo_user}"))
+        pw = linux_invoking_pw()
+        if pw is not None:
+            add(Path(pw.pw_dir))
     return homes
 
 

@@ -63,15 +63,15 @@ def save(config: dict) -> None:
 
 def resolve_install_features(
     *,
-    stealth: bool = False,
-    flags: bool = False,
-    chromedriver: bool = False,
+    stealth_extension: bool = False,
+    launch_wrapper: bool = False,
+    chromedriver_cdc: bool = False,
 ) -> dict:
-    if not stealth and not flags and not chromedriver:
+    if not stealth_extension and not launch_wrapper and not chromedriver_cdc:
         return dict(DEFAULT_CONFIG)
     return {
-        "js_injection": stealth,
-        "chrome_flags": flags,
-        "chrome_wrapper": flags,
-        "chromedriver_patch": chromedriver,
+        "js_injection": stealth_extension,
+        "chrome_flags": launch_wrapper,
+        "chrome_wrapper": launch_wrapper,
+        "chromedriver_patch": chromedriver_cdc,
     }

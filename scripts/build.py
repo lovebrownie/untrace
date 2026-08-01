@@ -370,10 +370,10 @@ def _windows_instructions(*, setup_name: str, portable_name: str) -> str:
             "--------------------------",
             "  untrace              — opens the GUI",
             "  untrace --status",
-            "  untrace --install --stealth --flags --chromedriver",
+            "  untrace --install --stealth-extension --launch-wrapper --chromedriver-cdc",
             "  untrace --uninstall",
             "",
-            "Logs: Documents\\Untrace\\untrace.log",
+            "Logs: %LOCALAPPDATA%\\Untrace\\untrace.log (removed by --uninstall)",
             "",
         ]
     )

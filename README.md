@@ -22,7 +22,7 @@ Three independent layers (bare `--install` enables all):
 
 ```bash
 uv run python scripts/build_gui.py   # or: uv run python -m untrace --build
-sudo apt install ./dist/untrace_2.0.0_amd64.deb
+sudo apt install ./dist/untrace_*_amd64.deb
 
 untrace              # opens the GUI (on PATH)
 untrace --status
@@ -61,9 +61,9 @@ OK Selenium-manager patch
 
 ```powershell
 uv run python scripts/build_gui.py
-# dist\Untrace-v2.0.0-Portable.exe     portable (Admin UAC)
-# dist\Untrace-v2.0.0-Setup.exe        installer (embeds VC++ + Inno Setup 6)
-# dist\Untrace-v2.0.0-Windows.zip      Setup + Portable + INSTRUCTIONS.txt
+# dist\Untrace-*-Portable.exe     portable (Admin UAC)
+# dist\Untrace-*-Setup.exe        installer (embeds VC++ + Inno Setup 6)
+# dist\Untrace-*-Windows.zip      Setup + Portable + INSTRUCTIONS.txt
 untrace              # after Setup: on PATH
 untrace --status
 untrace --gui
@@ -185,12 +185,12 @@ uv run pytest
 
 | Platform | Artifact |
 |----------|----------|
-| Windows | `dist/Untrace-v2.0.0-Setup.exe` + `Portable.exe` + `Windows.zip` |
-| Linux | `dist/untrace_2.0.0_amd64.deb` |
-| Both | `dist/untrace-injector-v2.0.0.zip` |
+| Windows | `dist/Untrace-*-Setup.exe` + `Portable.exe` + `Windows.zip` |
+| Linux | `dist/untrace_*_amd64.deb` |
+| Both | `dist/untrace-injector-*.zip` |
 
 Windows Setup builds need [Inno Setup 6](https://jrsoftware.org/isinfo.php) (`ISCC.exe`). Install with `winget install JRSoftware.InnoSetup` or `choco install innosetup`. Linux `.deb` builds need `dpkg-deb`.
 
 The `.deb` / Setup install put `untrace` on `PATH`, a desktop/Start Menu launcher, and bundled docs. The GUI elevates on launch (UAC / pkexec); primary action is **Install** or **Update**. Logs: `Documents/Untrace/untrace.log`.
 
-CI (`.github/workflows/ci.yml`) lints on Linux, runs unit tests on Linux and Windows, then builds and uploads `dist/` artifacts named `untrace-<Linux|Windows>-vX.Y.Z`.
+CI (`.github/workflows/ci.yml`) lints on Linux, runs unit tests on Linux and Windows, then builds and uploads `dist/` artifacts.

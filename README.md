@@ -6,16 +6,13 @@
 
 Untrace makes Chrome automation harder to detect. Install once, then use normal Chrome or bare Selenium — no per-script options, no test-side hacks.
 
-Four optional layers, toggled independently:
+Three independent layers (bare `--install` enables all):
 
 | Layer | Flag | What it does |
 |-------|------|-------------|
 | **Stealth** | `--stealth` | MV3 extension — injects scripts at `document_start` in the `MAIN` world on every frame. **Linux:** local pack/seed. **Windows:** [Chrome Web Store force-install](https://chromewebstore.google.com/detail/untrace-injector/mgnlenokophofdnmlabkgpmlnolgomgj) |
-| **Chrome wrapper** | `--flags` | Replaces Chrome with a wrapper in front of `chrome_real` (bash on Linux, C# on Windows). Strips chromedriver junk flags, applies launcher flags, seeds the extension into profiles (**Linux**). **Windows:** random profiles under `%TEMP%\chrome_random_profiles` for manual and Selenium |
-| **Chromedriver patch** | `--chromedriver` | Neutralizes the CDC (`window.cdc_*`) injection in cached chromedriver binaries (and blanks `test-type=webdriver`). **Linux** also blanks `enable-automation` in the driver. **Windows** leaves `enable-automation` intact (Chrome needs it under remote debugging). Patched PE is unsigned — WDAC/SAC may block it (`WinError 4551`) |
-| **Selenium-manager patch** | `--chromedriver` (with install) | Points Selenium's `selenium-manager` at the user Chrome wrapper so `webdriver.Chrome()` uses untrace automatically (**Linux only**) |
-
-Bare `--install` (no flags) enables all three feature flags (`--stealth`, `--flags`, `--chromedriver`). On Windows, selenium-manager patching is skipped; stealth uses the Web Store extension (not the Linux local pack).
+| **Chrome wrapper** | `--flags` | Replaces Chrome with a wrapper in front of `chrome_real` (bash on Linux, C# on Windows). Strips chromedriver junk flags, applies launcher flags. Seeds the extension into profiles on Linux; on Windows uses random profiles under `%TEMP%\chrome_random_profiles` |
+| **Chromedriver patch** | `--chromedriver` | Neutralizes the CDC (`window.cdc_*`) injection in cached chromedriver binaries and blanks `test-type=webdriver`. On Linux also blanks `enable-automation` and patches selenium-manager so `webdriver.Chrome()` picks up the wrapper. On Windows leaves `enable-automation` intact (required for remote debugging) |
 
 ## Quick start
 
@@ -25,7 +22,7 @@ Bare `--install` (no flags) enables all three feature flags (`--stealth`, `--fla
 
 ```bash
 poetry run task build-gui   # or: python -m untrace --build
-sudo apt install ./dist/untrace_0.1.0_amd64.deb
+sudo apt install ./dist/untrace_2.0.0_amd64.deb
 
 untrace              # opens the GUI (on PATH)
 untrace --status
@@ -60,14 +57,13 @@ OK Selenium-manager patch
 
 ### Windows
 
-**Option A — Setup installer (GUI + `untrace` on PATH)**
+**Option A — Setup installer (GUI + `untrace` on `PATH`)**
 
 ```powershell
 poetry run task build-gui
-# dist\Untrace-v0.1.0-Portable.exe     portable (Admin UAC)
-# dist\Untrace-v0.1.0-Setup.exe        installer (embeds VC++ + Inno Setup 6; installs them then Untrace)
-# dist\Untrace-v0.1.0-Windows.zip      Setup + Portable + INSTRUCTIONS.txt
-# run the Setup (Admin), or the portable exe
+# dist\Untrace-v2.0.0-Portable.exe     portable (Admin UAC)
+# dist\Untrace-v2.0.0-Setup.exe        installer (embeds VC++ + Inno Setup 6)
+# dist\Untrace-v2.0.0-Windows.zip      Setup + Portable + INSTRUCTIONS.txt
 untrace              # after Setup: on PATH
 untrace --status
 untrace --gui
@@ -81,88 +77,26 @@ Uninstall from Windows Settings → Apps, or Start Menu → Untrace → Uninstal
 python -m untrace --install --stealth --flags --chromedriver
 python -m untrace --status
 python -m untrace --uninstall
-
 python -m untrace --gui
-# or: poetry run task gui
 ```
 
-## Build artifacts
-
-```bash
-python -m untrace --build
-# or: poetry run task build
-```
-
-| Platform | Artifact |
-|----------|----------|
-| Windows | `dist/Untrace-v0.1.0-Setup.exe` (auto-installs VC++ + Inno Setup 6, then Untrace) + `dist/Untrace-v0.1.0-Portable.exe` + `dist/Untrace-v0.1.0-Windows.zip` |
-| Linux | `dist/untrace_0.1.0_amd64.deb` |
-| Both | `dist/untrace-injector-v0.1.0.zip` (extension; version from `pyproject.toml`) |
-
-`poetry run task build` always packs the extension zip after the GUI/installer step (even if the Windows Setup pack fails, the portable `.exe` and zip are still written when possible).
-
-GUI-only: `poetry run task build-gui`. Extension only: `poetry run task pack-extension`.
-
-The Linux `.deb` / Windows Setup install:
-
-- `untrace` on `PATH` (CLI + GUI)
-- Desktop / Start Menu launcher + icon
-- License / docs bundled with the install
-
-The GUI asks for elevated privileges on launch (UAC on Windows, pkexec/sudo on Linux). On Windows the console host is detached so only the app window appears (CLI still uses a normal console). Window title is `untrace vX.Y.Z`. Primary action is **Install** when nothing is present, **Update** when Untrace is already installed. Logs append to `Documents/Untrace/untrace.log`.
-
-Pack a Chrome Web Store upload zip (no `key` in manifest):
-
-```bash
-python -m untrace --pack-extension
-```
-
-`--deploy` is not supported on Windows yet. `--stealth` force-installs [Untrace Injector](https://chromewebstore.google.com/detail/untrace-injector/mgnlenokophofdnmlabkgpmlnolgomgj) from the Chrome Web Store (Admin for policy keys) and warms `%PROGRAMDATA%\Untrace\chrome_profile_template`. `--chromedriver` patches cached drivers (keep App Control off if the unsigned PE is blocked).
-
-## Windows notes
-
-Windows uses the **flags / Chrome wrapper** plus optional **Web Store stealth**. Differences from Linux:
-
-| Topic | Behavior |
-|-------|----------|
-| **Stealth** | `ExtensionInstallForcelist` with the Chrome Web Store update URL only (non-enterprise Chrome blocks local/`http://` hosts — `[BLOCKED]` in `chrome://policy`). Install warms `%PROGRAMDATA%\Untrace\chrome_profile_template` once so force-install can write `Secure Preferences` (`location: 7`). That warmup starts Chrome **minimized / off-screen**, then **kills all `chrome_real.exe` / `chrome.exe` processes**. The wrapper **copies** the template into each session profile before launch (no DevTools delay for Selenium). |
-| **GUI** | `python -m untrace --gui` (or `poetry run task gui`). Elevates via UAC; hides the PyInstaller console so only the Tk window shows. Shows **Install** or **Update**, status cards, in-app confirmations. Writes `Documents/Untrace/untrace.log`. |
-| **Build** | `python -m untrace --build` → Setup (embeds VC++ redistributable + Inno Setup 6; installs them silently before Untrace) + Portable + Windows zip + extension zip. Building Setup needs [Inno Setup 6](https://jrsoftware.org/isinfo.php) (`ISCC.exe`) on the build machine — `winget install JRSoftware.InnoSetup` or `choco install innosetup`. |
-| **Profiles** | Manual (`--flags`) and Selenium both use `%TEMP%\chrome_random_profiles\profile_*`. Chromedriver’s temp `scoped_dir` is a **junction** into that tree so `DevToolsActivePort` still resolves. |
-| **Chrome wrapper** | `chrome.exe` → C# wrapper; real browser → `chrome_real.exe`. Strips chromedriver junk, applies launcher flags, **waits** for Chrome (no `exec`). Tracks `chrome_real` in a Job Object (`KILL_ON_JOB_CLOSE`) so `driver.quit()` also tears down Chrome children. |
-| **`--enable-automation`** | **Kept** in the wrapper **and** in the chromedriver binary patch — Chrome exits under `--remote-debugging-port` without it. The “Chrome is being controlled by automated test software” bar is expected on Windows. |
-| **Chromedriver patch** | CDC + blank `test-type=webdriver`; does **not** blank `enable-automation`. Edited PE is unsigned — SAC/WDAC may block (`WinError 4551`) |
-| **Selenium-manager** | Not patched (bash wrapper is Linux-only) |
-| **Roots** | `%LOCALAPPDATA%\Untrace`, `%PROGRAMDATA%\Untrace` |
-
-The Windows automation **infobar is cosmetic** — sites do not detect that UI strip. Bot checks care about page-side signals (`navigator.webdriver`, CDC, etc.), which `--stealth` / the extension and the chromedriver CDC patch cover. Keeping `--enable-automation` is the remote-debugging tradeoff; Linux can strip it and hide the bar, Windows cannot without Chrome exiting.
-
-If Selenium dies with “Chrome instance exited” after install, confirm the C# wrapper is current and that `--enable-automation` still reaches Chrome (Windows must not strip or binary-blank that flag). If the driver won’t start at all, check Smart App Control / WDAC (`WinError 4551`) and restore from `.untrace.bak` via `--uninstall` if needed.
-
-> **Warning:** If **Smart App Control** (or another Application Control / WDAC policy) is enabled on Windows, untrace may not work. The Chrome wrapper replaces `chrome.exe` with an unsigned C# binary, and `--chromedriver` produces an unsigned `chromedriver.exe`; Smart App Control can block either (`WinError 4551` for the driver). Turn Smart App Control off (or switch it to evaluation/off) if install succeeds but Chrome or Selenium still fails to launch. Install/uninstall (CLI or GUI) kills Chrome processes on the machine, including during stealth template warmup.
+> **Smart App Control / WDAC:** may block the unsigned Chrome wrapper or patched chromedriver (`WinError 4551`). Turn SAC off if install succeeds but Chrome/Selenium still fail to launch. Install/uninstall kills Chrome processes on the machine.
 
 ## Feature flags
 
 Each flag only enables its own layer. Combine as needed:
 
-| Command | Stealth | Flags | Chrome wrapper | Chromedriver |
-|---------|---------|-------|----------------|--------------|
-| `--install` | ✓ | ✓ | ✓ | ✓ |
-| `--install --stealth` | ✓ | ✗ | ✗ | ✗ |
-| `--install --flags` | ✗ | ✓ | ✓ | ✗ |
-| `--install --chromedriver` | ✗ | ✗ | ✗ | ✓ |
-| `--install --stealth --chromedriver` | ✓ | ✗ | ✗ | ✓ |
-| `--install --stealth --flags --chromedriver` | ✓ | ✓ | ✓ | ✓ |
-
-- **`--stealth`** — extension only. Stock Chrome binary, normal profile, no chromedriver patch.
-- **`--flags`** — patches Chrome (`chrome` → wrapper, real binary → `chrome_real`). Random `--user-data-dir` on manual launches (Linux) / `%TEMP%\chrome_random_profiles` for manual **and** Selenium (Windows). No extension unless `--stealth` is also passed.
-- **`--chromedriver`** — patches/unpatches Selenium's cached chromedriver binaries (and selenium-manager wrappers on Linux).
+| Command | Stealth | Flags / wrapper | Chromedriver |
+|---------|---------|-----------------|--------------|
+| `--install` | ✓ | ✓ | ✓ |
+| `--install --stealth` | ✓ | ✗ | ✗ |
+| `--install --flags` | ✗ | ✓ | ✗ |
+| `--install --chromedriver` | ✗ | ✗ | ✓ |
+| `--install --stealth --flags --chromedriver` | ✓ | ✓ | ✓ |
 
 Passing a flag off on reinstall disables that layer (e.g. `--install --stealth` unpatches chromedrivers and removes the Chrome wrapper if it was there).
 
-## Install
-
-`--install` (root on Linux, Admin on Windows) writes the system Chrome wrapper, extension root (`/etc/untrace` or `%PROGRAMDATA%\Untrace`), and on Linux also `~/.local/share/untrace/chrome` for Selenium-manager. Commands run under `sudo` resolve the real user's home via `SUDO_USER` — not `/root`.
+`--install` (root on Linux, Admin on Windows) writes the system Chrome wrapper and extension root (`/etc/untrace` or `%PROGRAMDATA%\Untrace`). On Linux it also writes `~/.local/share/untrace/chrome` for selenium-manager. Commands under `sudo` resolve the real user's home via `SUDO_USER` — not `/root`.
 
 ## Selenium
 
@@ -175,7 +109,20 @@ from selenium.webdriver.chrome.options import Options
 driver = webdriver.Chrome(options=Options())
 ```
 
-When the wrapper is active it strips chromedriver junk (`--disable-blink-features=AutomationControlled`, `--test-type=webdriver`, …) and applies launcher flags before launch. On **Linux** it also strips `--enable-automation` and `--headless` (headless is re-handled via the Linux wrapper). On **Windows** `--enable-automation` is left in place so Chrome stays alive, and `driver.quit()` tears down `chrome_real` via a Job Object (otherwise Windows can leave orphan browser processes between tests).
+When the wrapper is active it strips chromedriver junk (`--disable-blink-features=AutomationControlled`, `--test-type=webdriver`, …) and applies launcher flags. On Linux it also strips `--enable-automation` and `--headless`. On Windows `--enable-automation` stays so Chrome stays alive under remote debugging, and `driver.quit()` tears down `chrome_real` via a Job Object.
+
+## Windows differences
+
+| Topic | Behavior |
+|-------|----------|
+| **Stealth** | Web Store force-install only (`ExtensionInstallForcelist`). Non-enterprise Chrome blocks local/`http://` hosts. Install warms `%PROGRAMDATA%\Untrace\chrome_profile_template` once (Chrome writes `Secure Preferences` `location: 7`), then the wrapper copies that tree into each session profile. Do not use localhost update XML, `file://` CRX, or `--load-extension`. |
+| **Profiles** | Manual and Selenium both use `%TEMP%\chrome_random_profiles\profile_*`. Chromedriver’s `scoped_dir` is a junction into that tree. |
+| **Chrome wrapper** | `chrome.exe` → C# wrapper; real browser → `chrome_real.exe`. Strips chromedriver junk (never `--enable-automation`), applies launcher flags, `WaitForExit`, Job Object `KILL_ON_JOB_CLOSE`. |
+| **`--enable-automation`** | Kept in wrapper and chromedriver patch — Chrome exits under `--remote-debugging-port` without it. The automation infobar is expected and cosmetic; bot checks care about page-side signals, not that UI strip. |
+| **Chromedriver** | CDC + blank `test-type=webdriver` only. Selenium-manager is not patched (Linux-only). |
+| **Roots** | `%LOCALAPPDATA%\Untrace`, `%PROGRAMDATA%\Untrace` |
+
+`--deploy` is not supported on Windows yet. If Selenium dies with “Chrome instance exited”, confirm the wrapper is current and `--enable-automation` still reaches Chrome. If the driver won’t start, check SAC/WDAC and restore via `--uninstall`.
 
 ## Tests
 
@@ -202,8 +149,6 @@ Edit `custom.js` in the active untrace root, then re-run `--install`:
 
 Default stealth scripts live in `untrace/js/`. Enable or disable via `DEFAULT_CHROME_SCRIPTS` / `OPTIONAL_CHROME_SCRIPTS` in `untrace/__main__.py`.
 
-### Stealth scripts
-
 | Script | What it does |
 |--------|--------------|
 | `utils.js` | Shared stealth helpers (`replaceGetter`, chained `toString` redirects) — runs first |
@@ -225,44 +170,6 @@ Optional (off by default): `iframe.contentWindow`, `navigator.plugins`, `navigat
 
 > `iframe.contentWindow.js` is optional because its `document.createElement` hook can trip Akamai BMP on protected sites. Enable only if you need the srcdoc iframe fix.
 
-## Project layout
-
-```
-scripts/
-  build.py               Dist packer (PyInstaller + .deb / Inno Setup)
-  windows/untrace.iss    Windows installer script
-assets/
-  icon.svg               Brand mark (transparent background)
-  icon.png / icon-*.png  Raster icons (16 / 48 / 128) for the extension + GUI
-  icon.ico               GUI / installer icon
-untrace/
-  __init__.py            Exports __version__ (from pyproject.toml)
-  version.py             Reads [project].version; artifact name helpers
-  __main__.py            CLI, Chrome wrapper, script catalog
-  injector.py            Extension build, icons → manifest, profile seeding
-  chromedriver.py        CDC patch / unpatch with .untrace.bak
-  selenium.py            Patch selenium-manager to use the Chrome wrapper
-  config.py              Persisted feature flags per root
-  gui.py                 Install/update GUI (Windows + Linux)
-  applog.py              Documents/Untrace/untrace.log tee
-  js/                    Stealth injection sources
-tests/
-  test_chromedriver.py   Browser integration tests
-  test_chromedriver_unit.py  Chromedriver CDC patch unit tests
-  test_selenium.py       Selenium-manager patch unit tests
-  conftest.py            Bare Selenium fixture
-```
-
-Linux `--install --stealth` and `--pack-extension` copy `assets/icon-{16,48,128}.png` into the extension `icons/` folder and wire them into `manifest.json` (`icons` + `action.default_icon`).
-
-One version for the package, extension, and GUI — bump `[project].version` in `pyproject.toml`:
-
-```python
-from untrace import __version__
-```
-
-Extension builds and `--pack-extension` use `__version__` unless `--version` is passed.
-
 ## Development
 
 ```bash
@@ -277,6 +184,14 @@ python -m untrace --build     # same as task build
 pytest
 ```
 
-Windows installer builds need [Inno Setup 6](https://jrsoftware.org/isinfo.php) (`ISCC.exe` on `PATH`, or the default install location). Install with `winget install JRSoftware.InnoSetup` or `choco install innosetup`. Linux `.deb` builds need `dpkg-deb`.
+| Platform | Artifact |
+|----------|----------|
+| Windows | `dist/Untrace-v2.0.0-Setup.exe` + `Portable.exe` + `Windows.zip` |
+| Linux | `dist/untrace_2.0.0_amd64.deb` |
+| Both | `dist/untrace-injector-v2.0.0.zip` |
 
-CI (`.github/workflows/ci.yml`) runs lint + unit tests on Ubuntu and Windows (`fail-fast`: one failure cancels the other test job). Build only starts after every test job succeeds, then uploads `dist/` artifacts named `untrace-<OS>-vX.Y.Z`.
+Windows Setup builds need [Inno Setup 6](https://jrsoftware.org/isinfo.php) (`ISCC.exe`). Install with `winget install JRSoftware.InnoSetup` or `choco install innosetup`. Linux `.deb` builds need `dpkg-deb`.
+
+The `.deb` / Setup install put `untrace` on `PATH`, a desktop/Start Menu launcher, and bundled docs. The GUI elevates on launch (UAC / pkexec); primary action is **Install** or **Update**. Logs: `Documents/Untrace/untrace.log`.
+
+CI (`.github/workflows/ci.yml`) lints on Linux, runs unit tests on Linux and Windows, then builds and uploads `dist/` artifacts named `untrace-<Linux|Windows>-vX.Y.Z`.

@@ -148,7 +148,9 @@ def test_windows_wrapper_strips_extension_allowlist_flags(monkeypatch, tmp_path)
     from untrace.__main__ import build_wrapper_source
 
     injector.use_untrace_root(tmp_path / "untrace")
-    monkeypatch.setattr(config, "load", lambda: {"js_injection": True, "chrome_flags": True})
+    monkeypatch.setattr(
+        config, "load", lambda: {"js_injection": True, "chrome_flags": True}
+    )
     try:
         src = build_wrapper_source(r"C:\Chrome\chrome_real.exe", random_profile=True)
     finally:

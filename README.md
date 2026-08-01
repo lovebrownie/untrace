@@ -21,7 +21,7 @@ Three independent layers (bare `--install` enables all):
 **Option A — `.deb` (GUI + `untrace` on `PATH`)**
 
 ```bash
-poetry run task build-gui   # or: python -m untrace --build
+uv run python scripts/build_gui.py   # or: uv run python -m untrace --build
 sudo apt install ./dist/untrace_2.0.0_amd64.deb
 
 untrace              # opens the GUI (on PATH)
@@ -60,7 +60,7 @@ OK Selenium-manager patch
 **Option A — Setup installer (GUI + `untrace` on `PATH`)**
 
 ```powershell
-poetry run task build-gui
+uv run python scripts/build_gui.py
 # dist\Untrace-v2.0.0-Portable.exe     portable (Admin UAC)
 # dist\Untrace-v2.0.0-Setup.exe        installer (embeds VC++ + Inno Setup 6)
 # dist\Untrace-v2.0.0-Windows.zip      Setup + Portable + INSTRUCTIONS.txt
@@ -173,15 +173,14 @@ Optional (off by default): `iframe.contentWindow`, `navigator.plugins`, `navigat
 ## Development
 
 ```bash
-poetry install
-poetry run task lint          # format + fix with Ruff
-poetry run task lint-check    # verify only (CI)
-poetry run task gui           # install/uninstall GUI (elevates)
-poetry run task build         # Setup.exe / .deb + extension zip → dist/
-poetry run task build-gui     # installer artifact only
-poetry run task pack-extension  # extension zip only
-python -m untrace --build     # same as task build
-pytest
+uv sync --group dev
+uv run ruff format untrace/ tests/ && uv run ruff check --fix untrace/ tests/
+uv run ruff format --check untrace/ tests/ && uv run ruff check untrace/ tests/  # CI
+uv run python -m untrace --gui
+uv run python -m untrace --build
+uv run python scripts/build_gui.py
+uv run python -m untrace --pack-extension
+uv run pytest
 ```
 
 | Platform | Artifact |

@@ -70,78 +70,57 @@ def test_resolve_install_features(stealth, flags, chromedriver, expected):
     )
 
 
-def test_chrome_launch_flags_respect_config(monkeypatch, tmp_path):
+def test_chrome_launch_flags_respect_config(tmp_path):
     injector.use_untrace_root(tmp_path / "untrace")
-    monkeypatch.setattr(injector, "is_installed", lambda: True)
-    monkeypatch.setattr(
-        injector, "extension_launch_flags", lambda: ["--load-extension=/tmp/ext"]
-    )
     try:
         config.save({"js_injection": False, "chrome_flags": True})
         flags = chrome_launch_flags()
         assert all(CHROME_FLAGS[name] in flags for name in DEFAULT_CHROME_FLAGS)
-        assert "--load-extension=/tmp/ext" not in flags
 
         config.save({"js_injection": True, "chrome_flags": False})
-        assert chrome_launch_flags() == ["--load-extension=/tmp/ext"]
+        assert chrome_launch_flags() == []
     finally:
         injector.clear_untrace_root_override()
 
 
-def test_chrome_wrapper_uses_random_profile_only_when_enabled():
-    flags = [CHROME_FLAGS[name] for name in DEFAULT_CHROME_FLAGS]
-    random_on = build_chrome_wrapper_script(flags, random_profile=True)
-    random_off = build_chrome_wrapper_script(flags, random_profile=False)
+def test_chrome_wrapper_script():
+    random_on = build_chrome_wrapper_script(random_profile=True)
+    random_off = build_chrome_wrapper_script(random_profile=False)
 
     assert "chrome_random_profiles" in random_on
     assert "chrome_random_profiles" not in random_off
     assert ".config/google-chrome" in random_off
 
+    assert "UNTRACE_AUTOMATION" in random_on
+    assert "_resolve_untrace_root" in random_on
+    assert "_seed_untrace_extension" in random_on
+    assert 'if [ "$UNTRACE_AUTOMATION" = "1" ]; then' in random_on
+    assert "--enable-automation" in random_on
+    assert "--disable-background-networking" in random_on
+    assert "_read_launch_flags" in random_on
+    assert "launch.flags" in random_on
+    assert "${_untrace_launch_flags[@]}" in random_on
+    assert "AutomationControlled" not in random_on
+    assert "--disable-blink-features=AutomationControlled" not in random_on
+    assert "--disable-blink-features=*" in random_on
+    assert "--disable-blink-features)" in random_on
+    assert "--window-size=1920,1080" in random_on
+    assert "_untrace_wants_headless" in random_on
+    assert "_untrace_runner" in random_on
+    assert '_untrace_filtered+=("$arg")' in random_on
+    assert "_untrace_load_extensions" in random_on
+    assert "--load-extension=*)" in random_on
+    assert '"$_untrace_user_data_dir" "${_untrace_load_extensions[@]}"' in random_on
 
-def test_chrome_wrapper_seeds_extension_for_selenium():
-    flags = [CHROME_FLAGS[name] for name in DEFAULT_CHROME_FLAGS]
-    patch = build_chrome_wrapper_script(flags, random_profile=True)
+    assert "--disable-extensions)" in random_on
+    assert "--disable-extensions-except)" in random_on
+    assert "--disable-extensions-except=*)" in random_on
+    assert "_untrace_skip_next=1" in random_on
 
-    assert "UNTRACE_AUTOMATION" in patch
-    assert "_resolve_untrace_root" in patch
-    assert "_seed_untrace_extension" in patch
-    assert 'if [ "$UNTRACE_AUTOMATION" = "1" ]; then' in patch
-    assert "--enable-automation" in patch
-    assert "--disable-background-networking" in patch
-    assert "_read_launch_flags" in patch
-    assert "launch.flags" in patch
-    assert "${_untrace_launch_flags[@]}" in patch
-    assert "AutomationControlled" not in patch
-    assert "--disable-blink-features=AutomationControlled" not in patch
-    assert "--disable-blink-features=*" in patch
-    assert "--disable-blink-features)" in patch
-    assert "--window-size=1920,1080" in patch
-    assert "_untrace_wants_headless" in patch
-    assert "_untrace_runner" in patch
-    assert '_untrace_filtered+=("$arg")' in patch
-    assert "_untrace_load_extensions" in patch
-    assert "--load-extension=*)" in patch
-    assert '"$_untrace_user_data_dir" "${_untrace_load_extensions[@]}"' in patch
-
-
-def test_chrome_wrapper_strips_extension_allowlist_flags():
-    flags = [CHROME_FLAGS[name] for name in DEFAULT_CHROME_FLAGS]
-    patch = build_chrome_wrapper_script(flags, random_profile=True)
-
-    assert "--disable-extensions)" in patch
-    assert "--disable-extensions-except)" in patch
-    assert "--disable-extensions-except=*)" in patch
-    assert "_untrace_skip_next=1" in patch
-
-
-def test_chrome_wrapper_merges_disable_features_for_load_extension():
-    flags = [CHROME_FLAGS[name] for name in DEFAULT_CHROME_FLAGS]
-    patch = build_chrome_wrapper_script(flags, random_profile=True)
-
-    assert "_untrace_merge_disable_features" in patch
-    assert "_untrace_add_disable_features" in patch
-    assert "DisableLoadExtensionCommandLineSwitch" in patch
-    assert "--disable-features=*)" in patch
+    assert "_untrace_merge_disable_features" in random_on
+    assert "_untrace_add_disable_features" in random_on
+    assert "DisableLoadExtensionCommandLineSwitch" in random_on
+    assert "--disable-features=*)" in random_on
 
 
 def test_windows_wrapper_strips_extension_allowlist_flags(monkeypatch, tmp_path):

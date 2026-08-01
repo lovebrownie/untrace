@@ -1,30 +1,17 @@
 from __future__ import annotations
 
-import os
 import sys
 from datetime import datetime
 from pathlib import Path
+
+from untrace.paths import user_home
 
 _file = None
 _enabled = False
 
 
-def _user_home() -> Path:
-    if sys.platform == "win32":
-        return Path(os.environ.get("USERPROFILE") or Path.home())
-    sudo_user = os.environ.get("SUDO_USER")
-    if sudo_user and os.geteuid() == 0:
-        try:
-            import pwd
-
-            return Path(pwd.getpwnam(sudo_user).pw_dir)
-        except (KeyError, ImportError):
-            pass
-    return Path.home()
-
-
 def log_dir() -> Path:
-    path = _user_home() / "Documents" / "Untrace"
+    path = user_home() / "Documents" / "Untrace"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -82,7 +69,7 @@ def enable(command: str | None = None) -> Path:
             print(f"[untrace] {command}")
         return path
 
-    _file = open(path, "a", encoding="utf-8", errors="replace")
+    _file = path.open("a", encoding="utf-8", errors="replace")
     stamp = datetime.now().isoformat(timespec="seconds")
     _file.write(f"\n--- {stamp} ---\n")
     if command:
@@ -101,7 +88,7 @@ def write(message: str) -> None:
         print(line, end="")
         return
     try:
-        with open(log_path(), "a", encoding="utf-8", errors="replace") as fh:
+        with log_path().open("a", encoding="utf-8", errors="replace") as fh:
             fh.write(line)
     except OSError:
         pass

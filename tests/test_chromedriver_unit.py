@@ -66,12 +66,10 @@ def test_unpatch_all_chromedrivers_uses_sudo_user_home(tmp_path, monkeypatch):
     driver.chmod(0o755)
     chromedriver.patch_chromedriver_binary(driver)
 
-    monkeypatch.setattr(chromedriver.Path, "home", lambda: root_home)
-    monkeypatch.setenv("SUDO_USER", "carlos")
     monkeypatch.setattr(
-        chromedriver.pwd,
-        "getpwnam",
-        lambda name: type("Pw", (), {"pw_dir": str(real_user_home)})(),
+        chromedriver,
+        "home_dirs_to_search",
+        lambda: [root_home, real_user_home],
     )
 
     unpatched = chromedriver.unpatch_all_chromedrivers()

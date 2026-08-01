@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import platform
 import sys
+from functools import lru_cache
 from pathlib import Path
+
+from untrace.paths import IS_WINDOWS
 
 
 def _repo_root() -> Path:
@@ -15,20 +18,50 @@ def _pyproject_path() -> Path:
     return _repo_root() / "pyproject.toml"
 
 
-def read_version() -> str:
+@lru_cache(maxsize=1)
+def read_project() -> dict:
     path = _pyproject_path()
     if not path.is_file():
         raise FileNotFoundError(f"pyproject.toml not found: {path}")
-    try:
-        import tomllib
-    except ModuleNotFoundError:  # pragma: no cover
-        import tomli as tomllib  # type: ignore
+    import tomllib
 
     data = tomllib.loads(path.read_text(encoding="utf-8"))
-    version = data.get("project", {}).get("version")
+    project = data.get("project")
+    if not isinstance(project, dict):
+        raise ValueError(f"missing [project] in {path}")
+    return dict(project)
+
+
+def read_version() -> str:
+    version = read_project().get("version")
     if not version:
-        raise ValueError(f"missing [project].version in {path}")
+        raise ValueError(f"missing [project].version in {_pyproject_path()}")
     return str(version).strip()
+
+
+def _primary_author() -> dict:
+    authors = read_project().get("authors") or []
+    if not authors or not isinstance(authors[0], dict):
+        raise ValueError(f"missing [project].authors in {_pyproject_path()}")
+    return authors[0]
+
+
+def author_name() -> str:
+    name = str(_primary_author().get("name") or "").strip()
+    if not name:
+        raise ValueError(f"missing author name in {_pyproject_path()}")
+    return name
+
+
+def author_email() -> str:
+    email = str(_primary_author().get("email") or "").strip()
+    if not email:
+        raise ValueError(f"missing author email in {_pyproject_path()}")
+    return email
+
+
+def author_contact() -> str:
+    return f"{author_name()} <{author_email()}>"
 
 
 __version__ = read_version()
@@ -44,7 +77,7 @@ def gui_exe_name(version: str | None = None) -> str:
 
 
 def gui_artifact_name(version: str | None = None) -> str:
-    if sys.platform == "win32":
+    if IS_WINDOWS:
         return f"Untrace-{version_tag(version)}-Setup.exe"
     ver = (version or __version__).lstrip("vV")
     machine = platform.machine().lower()

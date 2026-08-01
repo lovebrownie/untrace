@@ -8,15 +8,23 @@ alwaysApply: true
 
 One root install (`sudo python -m untrace --install --stealth --flags --chromedriver`) wires the Chrome wrapper, extension, and chromedriver. Re-run to update. Fix the wrapper, extension, and chromedriver — not the caller.
 
+## Toolchain
+
+- Use **uv** only (`uv sync --group dev`, `uv run …`). Do not reintroduce Poetry or taskipy.
+- Lint: `uv run ruff format untrace/ tests/ scripts/ && uv run ruff check --fix untrace/ tests/ scripts/`
+- Unit tests: `uv run pytest --ignore=tests/test_chromedriver.py`
+- Browser tests: `uv run pytest tests/test_chromedriver.py` (requires a prior full install)
+
 ## Install / uninstall
 
 - Feature flags are independent: `--stealth` (extension), `--flags` (Chrome wrapper + random profile), `--chromedriver` (CDC patch). Bare `--install` enables all.
 - **`sudo --uninstall` must remove everything** — system Chrome wrapper (`chrome_real` restore), `/etc/untrace`, **and** user tree at `~/.local/share/untrace` for `SUDO_USER` (not just `/root`). Unpatch chromedrivers. Never leave user tree behind with a “not removed” note.
-- Commands under `sudo` must resolve the real user’s home via `SUDO_USER` / `injector.user_deploy_roots()` — not `Path.home()` as root.
+- Commands under `sudo` must resolve the real user’s home via `SUDO_USER` / `injector.user_deploy_roots()` / `untrace.paths` helpers — not `Path.home()` as root.
+- Install/uninstall entrypoints elevate via `ensure_privileges()` (pkexec/sudo / UAC). Do not leave sticky `use_untrace_root()` overrides after install/uninstall.
 
 ## Windows
 
-- **Stealth** uses Chrome Web Store force-install (`ExtensionInstallForcelist` + External Extensions `update_url`), not the Linux local pack/seed path. Warm `%PROGRAMDATA%\Untrace\chrome_profile_template` once (Chrome writes `Secure Preferences` `location: 7`), then copy into each `--user-data-dir`. Preference seeding cannot fake Secure Preferences. Non-enterprise Chrome blocks local/`http://` force-install hosts. Do **not** use localhost update XML, `file://` CRX, or `--load-extension`.
+- **Stealth** uses Chrome Web Store force-install (`ExtensionInstallForcelist` + External Extensions `update_url`), not the Linux local pack/seed path. Warm `%PROGRAMDATA%\Untrace\chrome_profile_template` once (Chrome writes `Secure Preferences` `location: 7`), then copy into each `--user-data-dir`. Preference seeding cannot fake Secure Preferences. Non-enterprise Chrome blocks local/`http://` force-install hosts. Do **not** use localhost update XML, `file://` CRX, or `--load-extension`. Do not revive deleted Linux policy/CRX or Windows local-update/seed writers without an explicit product decision.
 - **Never strip or blank `--enable-automation`** (wrapper or chromedriver). Chrome exits under `--remote-debugging-port` without it. Chromedriver patch: CDC + blank `test-type=webdriver` only. SAC/WDAC may block the unsigned PE (`WinError 4551`) — warn in README/CLI. Selenium-manager remains Linux-only.
 - **C# wrapper:** detect automation, strip chromedriver junk (except `--enable-automation`), apply launcher flags, `WaitForExit`, Job Object `KILL_ON_JOB_CLOSE`. Manual and Selenium use `%TEMP%\chrome_random_profiles\profile_*`; Selenium `scoped_dir` is a junction into that tree.
 - Guard Unix-only APIs (`pwd`, `geteuid`, Unix paths). Deploy roots: `%LOCALAPPDATA%\Untrace` / `%PROGRAMDATA%\Untrace`.
@@ -31,7 +39,7 @@ One root install (`sudo python -m untrace --install --stealth --flags --chromedr
 
 - **`chrome_driver` is hands-off.** `tests/conftest.py` stays minimal: `webdriver.Chrome(options=Options())`, yield, quit. The only allowed toggle is the `HEADLESS` module variable (`False` by default; when `True`, pass `--headless=new`). Do **not** add anything else unless the user explicitly asks — no pytest CLI options, env/`PATH` hacks, extra Chrome args, custom capabilities, service config, retries, screenshots, or logging.
 - If a bot test fails, fix untrace (wrapper → CDC patch → extension) — **not** `chrome_driver` or the test file. Stealth/flags/CDC come from the installed stack.
-- Run: `pytest tests/test_chromedriver.py` (requires a prior `--install --stealth --flags --chromedriver`).
+- Run: `uv run pytest tests/test_chromedriver.py` (requires a prior `--install --stealth --flags --chromedriver`).
 - **Never auto-run `--install` from tests** — user controls install state; tests must not mutate it.
 - **Akamai blocks are detection failures**, not “wait and retry.” “Access Denied” / “Something went wrong” on `test_bot_akamai` (e.g. hilton.com) means untrace is leaking — fix until it passes. Use `WebDriverWait` (30s max) for readiness — no fixed `time.sleep` polling.
 
@@ -39,4 +47,6 @@ One root install (`sudo python -m untrace --install --stealth --flags --chromedr
 
 - **No unnecessary comments.** Comment only when logic is non-obvious or a constraint must be preserved.
 - **No unnecessary tests.** Every test must protect real behavior the user cares about.
-- **No dead imports.** Before finishing a change, remove unused imports and variables from every file you touched.
+- **No dead imports or symbols.** Before finishing a change, remove unused imports, variables, and helpers from every file you touched.
+- Shared path/home/chown/assets helpers live in `untrace/paths.py` — do not re-duplicate them across modules. Prefer `IS_WINDOWS` from there over scattered `sys.platform` checks.
+- Prefer **pathlib** (`Path`) over `os.path` / bare `open` / `os.chmod` / `os.makedirs`. Ruff enforces `UP` + `PTH`.

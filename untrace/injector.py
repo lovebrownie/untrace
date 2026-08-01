@@ -5,39 +5,37 @@ import hashlib
 import io
 import json
 import os
-import platform
 import shutil
 import subprocess
 import sys
 import tempfile
-import time
 import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
 
+from untrace.paths import (
+    IS_WINDOWS,
+    LINUX_USER_UNTRACE_REL,
+    SYSTEM_UNTRACE_LINUX,
+    assets_dir,
+    home_dirs_to_search,
+    user_untrace_root,
+)
 from untrace.version import __version__
-
-IS_WINDOWS = platform.system() == "Windows"
-
-if not IS_WINDOWS:
-    import pwd
-else:
-    pwd = None  # type: ignore[assignment]
 
 if IS_WINDOWS:
     SYSTEM_UNTRACE_ROOT = (
         Path(os.environ.get("PROGRAMDATA", r"C:\ProgramData")) / "Untrace"
     )
-    USER_UNTRACE_ROOT = Path(os.environ.get("LOCALAPPDATA", "")) / "Untrace"
 else:
-    SYSTEM_UNTRACE_ROOT = Path("/etc/untrace")
-    USER_UNTRACE_ROOT = Path.home() / ".local" / "share" / "untrace"
+    SYSTEM_UNTRACE_ROOT = Path(SYSTEM_UNTRACE_LINUX)
+
+USER_UNTRACE_ROOT = user_untrace_root()
 
 _active_root: Path | None = None
 
 UNTRACE_ROOT: Path
-USER_CHROME_WRAPPER: Path
 CUSTOM_SCRIPT_PATH: Path
 EXTENSION_KEY_PATH: Path
 EXTENSION_CRX_PATH: Path
@@ -47,27 +45,8 @@ SEED_PROFILE_SCRIPT: Path
 
 def user_deploy_roots() -> list[Path]:
     if IS_WINDOWS:
-        return [USER_UNTRACE_ROOT] if USER_UNTRACE_ROOT else []
-
-    homes: list[Path] = []
-    seen: set[Path] = set()
-
-    def add_home(home: Path) -> None:
-        resolved = home.expanduser().resolve()
-        if resolved in seen:
-            return
-        seen.add(resolved)
-        homes.append(resolved)
-
-    add_home(Path.home())
-    sudo_user = os.environ.get("SUDO_USER")
-    if sudo_user and pwd is not None:
-        try:
-            add_home(Path(pwd.getpwnam(sudo_user).pw_dir))
-        except KeyError:
-            add_home(Path(f"/home/{sudo_user}"))
-
-    return [home / ".local" / "share" / "untrace" for home in homes]
+        return [USER_UNTRACE_ROOT] if USER_UNTRACE_ROOT.parts else []
+    return [home / LINUX_USER_UNTRACE_REL for home in home_dirs_to_search()]
 
 
 def get_untrace_root() -> Path:
@@ -84,11 +63,9 @@ def get_untrace_root() -> Path:
 def _sync_path_attrs() -> None:
     global UNTRACE_ROOT, CUSTOM_SCRIPT_PATH, EXTENSION_DIR, EXTENSION_KEY_PATH
     global EXTENSION_CRX_PATH, EXTENSION_UPDATES_XML, SEED_PROFILE_SCRIPT
-    global USER_CHROME_WRAPPER
 
     root = get_untrace_root()
     UNTRACE_ROOT = root
-    USER_CHROME_WRAPPER = USER_UNTRACE_ROOT / "chrome"
     CUSTOM_SCRIPT_PATH = root / "custom.js"
     EXTENSION_DIR = root / "extension"
     EXTENSION_KEY_PATH = root / "extension.pem"
@@ -117,14 +94,7 @@ def clear_untrace_root_override() -> None:
 _sync_path_attrs()
 JS_SOURCE_DIR = Path(__file__).parent / "js"
 
-
-def _assets_dir() -> Path:
-    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
-        return Path(sys._MEIPASS) / "assets"
-    return Path(__file__).resolve().parent.parent / "assets"
-
-
-ASSETS_DIR = _assets_dir()
+ASSETS_DIR = assets_dir()
 UTILS_FILENAME = "utils.js"
 EXTENSION_ICON_SIZES = ("16", "48", "128")
 
@@ -136,16 +106,12 @@ LINUX_CHROME_EXTERNAL_DIRS: list[Path] = [
     Path("/usr/share/google-chrome/extensions"),
 ]
 
-CHROME_REAL_LINUX = "/opt/google/chrome/chrome_real"
-
 LOCATION_UNPACKED = 4
 
 WEBSTORE_EXTENSION_ID = "mgnlenokophofdnmlabkgpmlnolgomgj"
 WEBSTORE_UPDATE_URL = "https://clients2.google.com/service/update2/crx"
-WEBSTORE_EXTENSION_URL = (
-    f"https://chromewebstore.google.com/detail/untrace-injector/{WEBSTORE_EXTENSION_ID}"
-)
-WEBSTORE_HTTP_PORT = 19264
+# Legacy local force-install host — cleared on register/unregister.
+_WINDOWS_LEGACY_LOCAL_SOURCE = "http://127.0.0.1:19264"
 _WINDOWS_FORCE_LIST_KEY = r"SOFTWARE\Policies\Google\Chrome\ExtensionInstallForcelist"
 _WINDOWS_INSTALL_SOURCES_KEY = (
     r"SOFTWARE\Policies\Google\Chrome\ExtensionInstallSources"
@@ -156,8 +122,6 @@ _WINDOWS_CRX_DOWNLOAD_URL = (
     "?response=redirect&prodversion=9999.0.0.0&acceptformat=crx3"
     f"&x=id%3D{WEBSTORE_EXTENSION_ID}%26installsource%3Dondemand%26uc"
 )
-_WINDOWS_LOCAL_UPDATE_URL = f"http://127.0.0.1:{WEBSTORE_HTTP_PORT}/updates.xml"
-_WINDOWS_LOCAL_CRX_URL = f"http://127.0.0.1:{WEBSTORE_HTTP_PORT}/untrace-injector.crx"
 # Consumer Chrome only accepts Web Store update URLs ([BLOCKED] otherwise).
 _WINDOWS_FORCE_VALUE = f"{WEBSTORE_EXTENSION_ID};{WEBSTORE_UPDATE_URL}"
 
@@ -181,29 +145,6 @@ def scripts_to_deploy(
 
 def is_installed() -> bool:
     return EXTENSION_DIR.is_dir() and (EXTENSION_DIR / "manifest.json").is_file()
-
-
-def is_policy_registered() -> bool:
-    if IS_WINDOWS:
-        return is_windows_webstore_extension_registered()
-    return LINUX_CHROME_POLICY_FILE.is_file()
-
-
-def is_fully_registered() -> bool:
-    if IS_WINDOWS:
-        return is_windows_webstore_extension_registered()
-    if not is_installed():
-        return False
-    if not LINUX_CHROME_POLICY_FILE.is_file() or not EXTENSION_CRX_PATH.is_file():
-        return False
-    try:
-        ext_id = extension_id()
-    except Exception:
-        return False
-    for ext_dir in LINUX_CHROME_EXTERNAL_DIRS:
-        if not (ext_dir / f"{ext_id}.json").is_file():
-            return False
-    return True
 
 
 def _windows_webstore_root() -> Path:
@@ -268,20 +209,6 @@ def _unpack_crx(crx_bytes: bytes, dest: Path) -> None:
         raise RuntimeError(f"Unpacked extension is missing manifest.json at {dest}")
 
 
-def _write_windows_local_updates_xml(version: str) -> Path:
-    path = _windows_webstore_updates_path()
-    path.write_text(
-        "<?xml version='1.0' encoding='UTF-8'?>\n"
-        "<gupdate xmlns='http://www.google.com/update2/response' protocol='2.0'>\n"
-        f"  <app appid='{WEBSTORE_EXTENSION_ID}'>\n"
-        f"    <updatecheck codebase='{_WINDOWS_LOCAL_CRX_URL}' version='{version}' />\n"
-        "  </app>\n"
-        "</gupdate>\n",
-        encoding="utf-8",
-    )
-    return path
-
-
 def _windows_reg_list_entries(key_path: str) -> dict[str, str]:
     import winreg
 
@@ -299,7 +226,7 @@ def _windows_reg_list_entries(key_path: str) -> dict[str, str]:
                 if isinstance(value, str):
                     entries[str(name)] = value
                 i += 1
-    except FileNotFoundError, OSError:
+    except (FileNotFoundError, OSError):
         pass
     return entries
 
@@ -353,7 +280,7 @@ def _clear_windows_reg_list_prefix(key_path: str, match_prefix: str) -> None:
         ) as key:
             for name in to_delete:
                 winreg.DeleteValue(key, name)
-    except FileNotFoundError, OSError:
+    except (FileNotFoundError, OSError):
         pass
 
 
@@ -378,7 +305,7 @@ def _clear_windows_external_extension() -> None:
 
     try:
         winreg.DeleteKey(winreg.HKEY_LOCAL_MACHINE, _windows_external_extension_key())
-    except FileNotFoundError, OSError:
+    except (FileNotFoundError, OSError):
         pass
 
 
@@ -396,121 +323,41 @@ def is_windows_webstore_extension_registered() -> bool:
     )
 
 
-def _windows_seed_script_path() -> Path:
-    return _windows_webstore_root() / "seed_profile.py"
-
-
-def _write_windows_seed_script() -> Path:
-    script = f'''#!/usr/bin/env python3
-from __future__ import annotations
-
-import json
-import shutil
-import sys
-import time
-from pathlib import Path
-
-UNTRACE_ROOT = Path(__file__).resolve().parent
-EXTENSION_DIR = UNTRACE_ROOT / "untrace-injector"
-EXT_ID = "{WEBSTORE_EXTENSION_ID}"
-LOCATION_UNPACKED = 4
-
-
-def seed(profile_dir: str) -> None:
-    config_path = UNTRACE_ROOT / "config.json"
-    if config_path.is_file():
-        try:
-            cfg = json.loads(config_path.read_text(encoding="utf-8"))
-        except Exception:
-            cfg = {{}}
-        if not cfg.get("js_injection", True):
-            return
-
-    manifest_path = EXTENSION_DIR / "manifest.json"
-    if not manifest_path.is_file():
-        return
-
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    ver = str(manifest.get("version", "0"))
-    profile = Path(profile_dir)
-    dest = profile / "Default" / "Extensions" / EXT_ID / ver
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    if dest.exists():
-        shutil.rmtree(dest)
-    shutil.copytree(EXTENSION_DIR, dest)
-
-    prefs_path = profile / "Default" / "Preferences"
-    prefs: dict = {{}}
-    if prefs_path.is_file():
-        try:
-            prefs = json.loads(prefs_path.read_text(encoding="utf-8"))
-        except Exception:
-            prefs = {{}}
-
-    install_time = str(int(time.time() * 1_000_000))
-    extensions = prefs.setdefault("extensions", {{}})
-    extensions.setdefault("ui", {{}})["developer_mode"] = True
-    extensions.setdefault("settings", {{}})[EXT_ID] = {{
-        "location": LOCATION_UNPACKED,
-        "path": str(dest),
-        "state": 1,
-        "manifest": manifest,
-        "was_installed_by_default": False,
-        "was_installed_by_oem": False,
-        "first_install_time": install_time,
-    }}
-    prefs_path.parent.mkdir(parents=True, exist_ok=True)
-    prefs_path.write_text(json.dumps(prefs, indent=2), encoding="utf-8")
-
-
-if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        sys.exit(2)
-    try:
-        seed(sys.argv[1])
-    except Exception as exc:
-        print(f"[untrace] seed_profile failed: {{exc}}", file=sys.stderr)
-        sys.exit(1)
-'''
-    path = _windows_seed_script_path()
-    path.write_text(script, encoding="utf-8")
-    return path
-
-
 def register_windows_webstore_extension() -> str:
     if not IS_WINDOWS:
         raise RuntimeError("Web Store extension install is Windows-only")
 
     crx_path = _windows_webstore_crx_path()
     try:
-        crx_bytes, version = _download_webstore_crx()
+        crx_bytes, _version = _download_webstore_crx()
     except RuntimeError:
         if not crx_path.is_file():
             raise
         crx_bytes = crx_path.read_bytes()
-        version = _crx_version(crx_bytes)
 
     root = _windows_webstore_root()
     root.mkdir(parents=True, exist_ok=True)
-    cfg_path = root / "config.json"
-    cfg: dict = {}
-    if cfg_path.is_file():
-        try:
-            cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError, OSError:
-            cfg = {}
-    cfg["js_injection"] = True
-    cfg_path.write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
+    from untrace import config
+
+    prior = _active_root
+    try:
+        use_untrace_root(root)
+        cfg = config.load()
+        cfg["js_injection"] = True
+        config.save(cfg)
+    finally:
+        if prior is not None:
+            use_untrace_root(prior)
+        else:
+            clear_untrace_root_override()
 
     crx_path.write_bytes(crx_bytes)
     _unpack_crx(crx_bytes, _windows_unpacked_extension_dir())
-    _write_windows_local_updates_xml(version)
-    _write_windows_seed_script()
     _set_windows_reg_list_value(
         _WINDOWS_FORCE_LIST_KEY, f"{WEBSTORE_EXTENSION_ID};", _WINDOWS_FORCE_VALUE
     )
     _clear_windows_reg_list_prefix(
-        _WINDOWS_INSTALL_SOURCES_KEY, f"http://127.0.0.1:{WEBSTORE_HTTP_PORT}"
+        _WINDOWS_INSTALL_SOURCES_KEY, _WINDOWS_LEGACY_LOCAL_SOURCE
     )
     _set_windows_external_extension_update_url()
     return WEBSTORE_EXTENSION_ID
@@ -522,7 +369,7 @@ def unregister_windows_webstore_extension() -> None:
 
     _clear_windows_reg_list_prefix(_WINDOWS_FORCE_LIST_KEY, f"{WEBSTORE_EXTENSION_ID};")
     _clear_windows_reg_list_prefix(
-        _WINDOWS_INSTALL_SOURCES_KEY, f"http://127.0.0.1:{WEBSTORE_HTTP_PORT}"
+        _WINDOWS_INSTALL_SOURCES_KEY, _WINDOWS_LEGACY_LOCAL_SOURCE
     )
     _clear_windows_external_extension()
     unpacked = _windows_unpacked_extension_dir()
@@ -531,14 +378,10 @@ def unregister_windows_webstore_extension() -> None:
     for path in (
         _windows_webstore_crx_path(),
         _windows_webstore_updates_path(),
-        _windows_seed_script_path(),
+        _windows_webstore_root() / "seed_profile.py",
     ):
         if path.is_file():
             path.unlink()
-
-
-def extension_launch_flags() -> list[str]:
-    return []
 
 
 def extension_id_from_public_key(public_key_b64: str) -> str:
@@ -547,19 +390,6 @@ def extension_id_from_public_key(public_key_b64: str) -> str:
         chr(ord("a") + (digest[i] >> 4)) + chr(ord("a") + (digest[i] & 0x0F))
         for i in range(16)
     )
-
-
-def extension_settings_entry(ext_id: str, manifest: dict, dest: Path) -> dict:
-    install_time = str(int(time.time() * 1_000_000))
-    return {
-        "location": LOCATION_UNPACKED,
-        "path": str(dest),
-        "state": 1,
-        "manifest": manifest,
-        "was_installed_by_default": False,
-        "was_installed_by_oem": False,
-        "first_install_time": install_time,
-    }
 
 
 def _extension_private_key_valid() -> bool:
@@ -592,7 +422,7 @@ def _ensure_extension_private_key() -> None:
         ["openssl", "genrsa", "-out", str(EXTENSION_KEY_PATH), "2048"],
         check=True,
     )
-    os.chmod(EXTENSION_KEY_PATH, 0o600)
+    EXTENSION_KEY_PATH.chmod(0o600)
 
 
 def _public_key_base64() -> str:
@@ -656,7 +486,7 @@ def _deploy_extension_icons(ext_root: Path) -> dict[str, str]:
 
 def build_manifest(
     script_files: list[str],
-    public_key_b64: str,
+    public_key_b64: str | None = None,
     version: str = "1.0",
     *,
     icons: dict[str, str] | None = None,
@@ -665,7 +495,6 @@ def build_manifest(
         "manifest_version": 3,
         "name": "Untrace Injector",
         "version": version,
-        "key": public_key_b64,
         "host_permissions": ["<all_urls>"],
         "content_scripts": [
             {
@@ -677,6 +506,8 @@ def build_manifest(
             }
         ],
     }
+    if public_key_b64:
+        manifest["key"] = public_key_b64
     if icons:
         manifest["icons"] = icons
         manifest["action"] = {"default_icon": icons}
@@ -689,9 +520,7 @@ def build_store_manifest(
     *,
     icons: dict[str, str] | None = None,
 ) -> dict:
-    manifest = build_manifest(script_files, "", version, icons=icons)
-    del manifest["key"]
-    return manifest
+    return build_manifest(script_files, None, version, icons=icons)
 
 
 def pack_extension_zip(
@@ -765,83 +594,6 @@ def _deploy_custom_script(ext_js_dir: Path) -> str:
     return f"js/{custom_name}"
 
 
-def _pack_extension_crx(chrome_real: str = CHROME_REAL_LINUX) -> None:
-    if not os.path.isfile(chrome_real):
-        raise RuntimeError(
-            f"Real Chrome binary not found at {chrome_real}. "
-            "Cannot pack the extension CRX (backup should have happened earlier)."
-        )
-
-    if EXTENSION_CRX_PATH.is_file():
-        EXTENSION_CRX_PATH.unlink()
-
-    cmd = [
-        chrome_real,
-        f"--pack-extension={EXTENSION_DIR}",
-        f"--pack-extension-key={EXTENSION_KEY_PATH}",
-        "--headless=new",
-    ]
-    if hasattr(os, "geteuid") and os.geteuid() == 0:
-        cmd.append("--no-sandbox")
-
-    subprocess.run(cmd, check=True, stderr=subprocess.DEVNULL)
-
-    packed = Path(f"{EXTENSION_DIR}.crx")
-    if not packed.is_file():
-        raise RuntimeError(f"Expected packed CRX at {packed}")
-
-    if packed != EXTENSION_CRX_PATH:
-        shutil.move(packed, EXTENSION_CRX_PATH)
-    os.chmod(EXTENSION_CRX_PATH, 0o644)
-
-
-def register_system_extension(version: str = "1.0") -> str:
-    if IS_WINDOWS:
-        return register_windows_webstore_extension()
-
-    ext_id = extension_id()
-    _pack_extension_crx()
-
-    EXTENSION_UPDATES_XML.write_text(f"""<?xml version='1.0' encoding='UTF-8'?>
-<gupdate xmlns='http://www.google.com/update2/response' protocol='version=1'>
-  <app appid='{ext_id}'>
-    <updatecheck codebase='file://{EXTENSION_CRX_PATH}' version='{version}' />
-  </app>
-</gupdate>
-""")
-    os.chmod(EXTENSION_UPDATES_XML, 0o644)
-
-    LINUX_CHROME_POLICY_DIR.mkdir(parents=True, exist_ok=True)
-    policy = {
-        "ExtensionSettings": {
-            ext_id: {
-                "installation_mode": "force_installed",
-                "update_url": f"file://{EXTENSION_UPDATES_XML}",
-            }
-        }
-    }
-    LINUX_CHROME_POLICY_FILE.write_text(json.dumps(policy, indent=2) + "\n")
-    os.chmod(LINUX_CHROME_POLICY_FILE, 0o644)
-
-    for ext_dir in LINUX_CHROME_EXTERNAL_DIRS:
-        ext_dir.mkdir(parents=True, exist_ok=True)
-        os.chmod(ext_dir, 0o755)
-        external_json = ext_dir / f"{ext_id}.json"
-        external_json.write_text(
-            json.dumps(
-                {
-                    "external_crx": str(EXTENSION_CRX_PATH),
-                    "external_version": version,
-                },
-                indent=2,
-            )
-            + "\n"
-        )
-        os.chmod(external_json, 0o644)
-
-    return ext_id
-
-
 def unregister_system_extension() -> None:
     if IS_WINDOWS:
         unregister_windows_webstore_extension()
@@ -851,7 +603,7 @@ def unregister_system_extension() -> None:
     if EXTENSION_KEY_PATH.is_file():
         try:
             ext_id = extension_id()
-        except subprocess.CalledProcessError, OSError:
+        except (subprocess.CalledProcessError, OSError):
             ext_id = None
 
     for path in (
@@ -872,8 +624,6 @@ def unregister_system_extension() -> None:
 def setup(
     enabled_scripts: list[str],
     script_catalog: dict[str, tuple[str, list | None]],
-    *,
-    chrome_real: str = CHROME_REAL_LINUX,
 ) -> Path:
     UNTRACE_ROOT.mkdir(parents=True, exist_ok=True)
 
@@ -892,9 +642,9 @@ def setup(
     manifest = build_manifest(script_files, public_key_b64, version, icons=icons)
     (EXTENSION_DIR / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
 
-    os.chmod(EXTENSION_DIR, 0o755)
+    EXTENSION_DIR.chmod(0o755)
     for path in EXTENSION_DIR.rglob("*"):
-        os.chmod(path, 0o755 if path.is_dir() else 0o644)
+        path.chmod(0o755 if path.is_dir() else 0o644)
 
     _deploy_seed_script()
 

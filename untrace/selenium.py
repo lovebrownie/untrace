@@ -1,61 +1,39 @@
 from __future__ import annotations
 
-import os
-import platform
 import shutil
 import sysconfig
 from pathlib import Path
 
-IS_WINDOWS = platform.system() == "Windows"
-
-if not IS_WINDOWS:
-    import pwd
-else:
-    pwd = None  # type: ignore[assignment]
+from untrace.paths import (
+    BACKUP_SUFFIX,
+    IS_WINDOWS,
+    LINUX_USER_UNTRACE_REL,
+    backup_path_for,
+    home_dirs_to_search,
+)
 
 PATCH_MARKER = "untrace selenium-manager"
-BACKUP_SUFFIX = ".untrace.bak"
 WRAPPER_SCRIPT = """#!/bin/bash
 # {patch_marker}
 REAL="$(dirname "$(readlink -f "$0")")/{binary_name}{backup_suffix}"
-USER_CHROME="${{HOME}}/.local/share/untrace/chrome"
+USER_CHROME="${{HOME}}/{user_untrace}/chrome"
 OUT="$("$REAL" "$@" 2>/dev/null)" || exit $?
 if [ ! -f "$USER_CHROME" ]; then
   printf '%s\\n' "$OUT"
   exit 0
 fi
 {python} -c '
-import json, os, sys
+import json, sys
+from pathlib import Path
 data = json.load(sys.stdin)
 result = data.get("result")
 if isinstance(result, dict) and result.get("browser_path"):
-    user = os.path.expanduser("~/.local/share/untrace/chrome")
-    if os.path.isfile(user):
-        result["browser_path"] = user
+    user = Path("~/{user_untrace}/chrome").expanduser()
+    if user.is_file():
+        result["browser_path"] = str(user)
 print(json.dumps(data))
 ' <<< "$OUT"
 """
-
-
-def _home_dirs_to_search() -> list[Path]:
-    homes: list[Path] = []
-    seen: set[Path] = set()
-
-    def add(path: Path) -> None:
-        resolved = path.expanduser().resolve()
-        if resolved in seen:
-            return
-        seen.add(resolved)
-        homes.append(resolved)
-
-    add(Path.home())
-    sudo_user = os.environ.get("SUDO_USER")
-    if sudo_user and pwd is not None:
-        try:
-            add(Path(pwd.getpwnam(sudo_user).pw_dir))
-        except KeyError:
-            add(Path(f"/home/{sudo_user}"))
-    return homes
 
 
 def _selenium_manager_candidates() -> list[Path]:
@@ -63,7 +41,7 @@ def _selenium_manager_candidates() -> list[Path]:
     exe = sysconfig.get_config_var("EXE") or ""
     platform_dir = "windows" if IS_WINDOWS else "linux"
 
-    for home in _home_dirs_to_search():
+    for home in home_dirs_to_search():
         for site_packages in (
             home / ".local" / "lib",
             home / ".local" / "share" / "uv",
@@ -97,7 +75,7 @@ def _selenium_manager_candidates() -> list[Path]:
 
 
 def backup_path(binary: Path) -> Path:
-    return binary.parent / f"{binary.name}{BACKUP_SUFFIX}"
+    return backup_path_for(binary)
 
 
 def is_patched(binary: Path) -> bool:
@@ -117,17 +95,18 @@ def patch_selenium_manager(binary: Path | str) -> bool:
     bak = backup_path(target)
     if not bak.is_file():
         shutil.copy2(target, bak)
-        os.chmod(bak, 0o755)
+        bak.chmod(0o755)
 
     script = WRAPPER_SCRIPT.format(
         patch_marker=PATCH_MARKER,
         binary_name=target.name,
         backup_suffix=BACKUP_SUFFIX,
+        user_untrace=LINUX_USER_UNTRACE_REL,
         python=shutil.which("python3") or shutil.which("python") or "/usr/bin/python3",
     )
 
     target.write_text(script)
-    os.chmod(target, 0o755)
+    target.chmod(0o755)
     return True
 
 
@@ -137,7 +116,7 @@ def unpatch_selenium_manager(binary: Path | str) -> bool:
     if not bak.is_file():
         return False
     shutil.copy2(bak, target)
-    os.chmod(target, 0o755)
+    target.chmod(0o755)
     bak.unlink(missing_ok=True)
     return True
 

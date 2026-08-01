@@ -3,8 +3,27 @@ import sys
 import pytest
 
 from untrace import injector
+from untrace import paths as pathmod
 
 _linux_only = pytest.mark.skipif(sys.platform == "win32", reason="Linux deploy paths")
+
+
+@_linux_only
+def test_home_dirs_to_search_includes_invoking_user_home(monkeypatch, tmp_path):
+    user_home = tmp_path / "testuser"
+    root_home = tmp_path / "root"
+    user_home.mkdir()
+    root_home.mkdir()
+
+    class FakePw:
+        pw_dir = str(user_home)
+
+    monkeypatch.setattr(pathmod.Path, "home", staticmethod(lambda: root_home))
+    monkeypatch.setattr(pathmod, "linux_invoking_pw", lambda: FakePw())
+
+    homes = pathmod.home_dirs_to_search()
+    assert root_home.resolve() in homes
+    assert user_home.resolve() in homes
 
 
 @_linux_only
@@ -22,6 +41,15 @@ def test_user_deploy_roots_includes_sudo_user(monkeypatch, tmp_path):
     roots = injector.user_deploy_roots()
     assert testuser_home / ".local" / "share" / "untrace" in roots
     assert root_home / ".local" / "share" / "untrace" in roots
+
+
+def test_user_deploy_has_payload_ignores_log_only(tmp_path):
+    root = tmp_path / "untrace"
+    root.mkdir()
+    (root / "untrace.log").write_text("hi\n")
+    assert injector.user_deploy_has_payload(root) is False
+    (root / "chrome").write_text("#!/bin/bash\n")
+    assert injector.user_deploy_has_payload(root) is True
 
 
 @_linux_only

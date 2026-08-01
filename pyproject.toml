@@ -20,6 +20,7 @@ dev = [
     "selenium (>=4.45.0,<5.0.0)",
     "pytest (>=9.1.1,<10.0.0)",
     "pyinstaller (>=6.21.0,<7.0.0) ; python_version >= \"3.14\" and python_version < \"3.16\"",
+    "taskipy>=1.14.1",
 ]
 
 [build-system]
@@ -42,3 +43,13 @@ ignore = ["E501"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["untrace"]
+
+[tool.taskipy.tasks]
+lint = "ruff format untrace/ tests/ scripts/ && ruff check --fix untrace/ tests/ scripts/"
+lint-check = "ruff format --check untrace/ tests/ scripts/ && ruff check untrace/ tests/ scripts/"
+test = "pytest --ignore=tests/test_chromedriver.py"
+test-browser = "pytest tests/test_chromedriver.py"
+gui = "python -m untrace --gui"
+build = "python -m untrace --build"
+build-gui = "python scripts/build_gui.py"
+pack-extension = "python -m untrace --pack-extension"

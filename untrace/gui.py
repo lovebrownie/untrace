@@ -7,6 +7,7 @@ import time
 import tkinter as tk
 from pathlib import Path
 
+from untrace import applog
 from untrace.paths import IS_WINDOWS, assets_dir
 from untrace.version import version_tag
 
@@ -43,13 +44,16 @@ def _fetch_status() -> dict:
 
 
 def _run_action(action: str) -> int:
-    from untrace import applog
     from untrace.__main__ import install, uninstall
 
     applog.write(f"gui: starting {action}")
     try:
         if action == "install":
-            install(stealth=True, flags=True, chromedriver=True)
+            install(
+                stealth_extension=True,
+                launch_wrapper=True,
+                chromedriver_cdc=True,
+            )
         elif action == "uninstall":
             uninstall()
         else:
@@ -1025,16 +1029,40 @@ class UntraceGui(tk.Tk):
         foot.pack(fill=tk.X, pady=(24, 0))
         foot_line = GreenRule(foot, height=1)
         foot_line.pack(fill=tk.X, pady=(0, 10))
+        foot_row = tk.Frame(foot, bg=BG)
+        foot_row.pack(anchor=tk.W)
         self._footer = tk.Label(
-            foot,
-            text=f"{version_tag()}  ·  log → Documents\\Untrace\\untrace.log",
+            foot_row,
+            text=f"{version_tag()}  ·  ",
             bg=BG,
             fg=MUTED,
             font=(FONT, 8),
         )
-        self._footer.pack(anchor=tk.W)
+        self._footer.pack(side=tk.LEFT)
+        self._footer_log = tk.Label(
+            foot_row,
+            text=f"log → {applog.display_log_path()}",
+            bg=BG,
+            fg=MUTED,
+            font=(FONT, 8, "underline"),
+            cursor="hand2",
+        )
+        self._footer_log.pack(side=tk.LEFT)
+        self._footer_log.bind("<Button-1>", lambda _e: self._open_log())
+        self._footer_log.bind(
+            "<Enter>", lambda _e: self._footer_log.configure(fg=GREEN)
+        )
+        self._footer_log.bind(
+            "<Leave>", lambda _e: self._footer_log.configure(fg=MUTED)
+        )
 
         self.refresh_status()
+
+    def _open_log(self) -> None:
+        try:
+            applog.reveal_in_file_manager()
+        except OSError:
+            show_notice(self, "Log", "Could not open the log folder.")
 
     def _show_loading(self, message: str) -> None:
         self._set_effects_paused(True)
@@ -1196,6 +1224,24 @@ class UntraceGui(tk.Tk):
         for child in self.cards.winfo_children():
             child.destroy()
 
+    def _set_hero_sub(self, text: str, *, open_log: bool = False) -> None:
+        self._hero_sub.unbind("<Button-1>")
+        if open_log:
+            self._hero_sub.configure(
+                text=text,
+                fg=MUTED,
+                font=(FONT, 9, "underline"),
+                cursor="hand2",
+            )
+            self._hero_sub.bind("<Button-1>", lambda _e: self._open_log())
+            return
+        self._hero_sub.configure(
+            text=text,
+            fg=MUTED,
+            font=(FONT, 9),
+            cursor="",
+        )
+
     def _render(self, snapshot: dict) -> None:
         self._snapshot = snapshot
         installed = bool(snapshot.get("installed"))
@@ -1204,17 +1250,17 @@ class UntraceGui(tk.Tk):
 
         if not chrome_found:
             self.hero_title.configure(text="chrome not found", fg=HOT)
-            self._hero_sub.configure(text="install chrome then refresh")
+            self._set_hero_sub("install chrome then refresh")
             if self._hero_edge is not None:
                 self._hero_edge.configure(bg=HOT)
         elif installed:
             self.hero_title.configure(text="online", fg=GREEN_BRIGHT)
-            self._hero_sub.configure(text=f"{active}/4 modules active")
+            self._set_hero_sub(f"{active}/4 modules active")
             if self._hero_edge is not None:
                 self._hero_edge.configure(bg=GREEN)
         else:
             self.hero_title.configure(text="offline", fg=MUTED)
-            self._hero_sub.configure(text="ready to install")
+            self._set_hero_sub("ready to install")
             if self._hero_edge is not None:
                 self._hero_edge.configure(bg=AMBER)
 
@@ -1274,7 +1320,10 @@ class UntraceGui(tk.Tk):
         if failed or snapshot is None:
             self._clear_cards()
             self.hero_title.configure(text="status unavailable", fg=HOT)
-            self._hero_sub.configure(text="check Documents\\Untrace\\untrace.log")
+            self._set_hero_sub(
+                f"check {applog.display_log_path()} (click to open)",
+                open_log=True,
+            )
             if self._hero_edge is not None:
                 self._hero_edge.configure(bg=HOT)
             if not self._busy:
@@ -1386,7 +1435,6 @@ class UntraceGui(tk.Tk):
 
 
 def main() -> None:
-    from untrace import applog
     from untrace.__main__ import ensure_privileges, hide_windows_console
 
     applog.enable(command="--gui")

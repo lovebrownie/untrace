@@ -12,7 +12,7 @@ from untrace.__main__ import (
 
 
 @pytest.mark.parametrize(
-    ("stealth", "flags", "chromedriver", "expected"),
+    ("stealth_extension", "launch_wrapper", "chromedriver_cdc", "expected"),
     [
         (False, False, False, config.DEFAULT_CONFIG),
         (
@@ -61,10 +61,14 @@ from untrace.__main__ import (
         ),
     ],
 )
-def test_resolve_install_features(stealth, flags, chromedriver, expected):
+def test_resolve_install_features(
+    stealth_extension, launch_wrapper, chromedriver_cdc, expected
+):
     assert (
         config.resolve_install_features(
-            stealth=stealth, flags=flags, chromedriver=chromedriver
+            stealth_extension=stealth_extension,
+            launch_wrapper=launch_wrapper,
+            chromedriver_cdc=chromedriver_cdc,
         )
         == expected
     )

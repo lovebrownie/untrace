@@ -1,21 +1,14 @@
 from __future__ import annotations
 
-import os
-import platform
 import re
 import shutil
+import stat
 from pathlib import Path
 
-IS_WINDOWS = platform.system() == "Windows"
-
-if not IS_WINDOWS:
-    import pwd
-else:
-    pwd = None  # type: ignore[assignment]
+from untrace.paths import IS_WINDOWS, backup_path_for, home_dirs_to_search
 
 PATCH_MARKER = b"untrace chromedriver"
 CDC_INJECTION_RE = re.compile(rb"\{window\.cdc.*?;\}")
-BACKUP_SUFFIX = ".untrace.bak"
 
 _BINARY_NOP = b" "
 
@@ -34,35 +27,14 @@ BINARY_STRING_PATCHES: tuple[tuple[bytes, bytes], ...] = (
 )
 
 
-def _home_dirs_to_search() -> list[Path]:
-    homes: list[Path] = []
-    seen: set[Path] = set()
-
-    def add(path: Path) -> None:
-        resolved = path.expanduser().resolve()
-        if resolved in seen:
-            return
-        seen.add(resolved)
-        homes.append(resolved)
-
-    add(Path.home())
-    sudo_user = os.environ.get("SUDO_USER")
-    if sudo_user and pwd is not None:
-        try:
-            add(Path(pwd.getpwnam(sudo_user).pw_dir))
-        except KeyError:
-            add(Path(f"/home/{sudo_user}"))
-    return homes
-
-
 def _selenium_cache_roots() -> list[Path]:
     return [
-        home / ".cache" / "selenium" / "chromedriver" for home in _home_dirs_to_search()
+        home / ".cache" / "selenium" / "chromedriver" for home in home_dirs_to_search()
     ]
 
 
 def backup_path(binary: Path) -> Path:
-    return binary.parent / f"{binary.name}{BACKUP_SUFFIX}"
+    return backup_path_for(binary)
 
 
 def find_chromedriver_binaries() -> list[Path]:
@@ -87,7 +59,11 @@ def find_chromedriver_binaries() -> list[Path]:
         resolved = path.resolve()
         if resolved in seen:
             continue
-        if not os.access(resolved, os.X_OK):
+        try:
+            mode = resolved.stat().st_mode
+        except OSError:
+            continue
+        if not mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH):
             continue
         seen.add(resolved)
         unique.append(resolved)
@@ -126,7 +102,7 @@ def patch_chromedriver_binary(path: Path | str) -> bool:
         bak = backup_path(target)
         if not bak.is_file():
             shutil.copy2(target, bak)
-            os.chmod(bak, 0o755)
+            bak.chmod(0o755)
 
         injection = match[0]
         replacement = b'{console.log("untrace chromedriver")}'.ljust(
@@ -141,7 +117,7 @@ def patch_chromedriver_binary(path: Path | str) -> bool:
         handle.write(updated)
         handle.truncate()
 
-    os.chmod(target, 0o755)
+    target.chmod(0o755)
     return True
 
 
@@ -152,12 +128,12 @@ def unpatch_chromedriver_binary(path: Path | str) -> bool:
         return False
     if not target.is_file():
         shutil.copy2(bak, target)
-        os.chmod(target, 0o755)
+        target.chmod(0o755)
         bak.unlink(missing_ok=True)
         return True
 
     shutil.copy2(bak, target)
-    os.chmod(target, 0o755)
+    target.chmod(0o755)
     bak.unlink(missing_ok=True)
     return True
 

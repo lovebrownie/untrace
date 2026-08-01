@@ -1,13 +1,8 @@
 #!/usr/bin/env python3
 import argparse
-import glob
-import json
 import os
-import platform
-import random
 import re
 import shutil
-import string
 import subprocess
 import sys
 import tempfile
@@ -15,13 +10,16 @@ import time
 from pathlib import Path
 
 from untrace import chromedriver, config, injector, selenium
-
-IS_WINDOWS = platform.system() == "Windows"
-
-if not IS_WINDOWS:
-    import pwd
-else:
-    pwd = None  # type: ignore[assignment]
+from untrace.paths import (
+    CHROME_BINARY_LINUX,
+    CHROME_REAL_LINUX,
+    IS_WINDOWS,
+    LINUX_USER_UNTRACE_REL,
+    RANDOM_PROFILES_DIRNAME,
+    SYSTEM_UNTRACE_LINUX,
+    chown_to_invoker,
+    linux_invoking_pw,
+)
 
 CHROMEDRIVER_STRIP_FLAGS: tuple[str, ...] = (
     "--enable-automation",
@@ -111,7 +109,7 @@ def _chrome_full_version() -> str | None:
             stderr=subprocess.STDOUT,
             timeout=5,
         )
-    except subprocess.SubprocessError, OSError:
+    except (subprocess.SubprocessError, OSError):
         return None
     parts = out.strip().split()
     return parts[-1] if len(parts) >= 3 else None
@@ -136,39 +134,16 @@ def chrome_launch_flags() -> list[str]:
         ua_flag = _chrome_user_agent_flag()
         if ua_flag:
             flags.append(ua_flag)
-    if cfg.get("js_injection", True):
-        flags.extend(injector.extension_launch_flags())
     return flags
-
-
-def _chown_to_sudo_user(path: Path) -> None:
-    if IS_WINDOWS or pwd is None:
-        return
-    sudo_user = os.environ.get("SUDO_USER")
-    if not sudo_user or os.geteuid() != 0 or not path.exists():
-        return
-    try:
-        pw = pwd.getpwnam(sudo_user)
-    except KeyError:
-        return
-    for entry in sorted(path.rglob("*"), reverse=True):
-        try:
-            os.chown(entry, pw.pw_uid, pw.pw_gid)
-        except OSError:
-            pass
-    try:
-        os.chown(path, pw.pw_uid, pw.pw_gid)
-    except OSError:
-        pass
 
 
 def write_launch_flags(flags: list[str], root: Path) -> Path:
     path = root / LAUNCH_FLAGS_FILE
     root.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(flags) + ("\n" if flags else ""))
-    os.chmod(path, 0o644)
+    path.chmod(0o644)
     if root in injector.user_deploy_roots():
-        _chown_to_sudo_user(root)
+        chown_to_invoker(root)
     return path
 
 
@@ -183,75 +158,36 @@ def _sync_launch_flags(
         write_launch_flags(launch_flags, root)
 
 
-def format_enabled_scripts() -> str:
-    return ", ".join(DEFAULT_CHROME_SCRIPTS)
-
-
-def format_enabled_flags() -> str:
-    return ", ".join(DEFAULT_CHROME_FLAGS)
-
-
-def random_user_data_dir() -> str:
-    rand_suffix = "".join(random.choices(string.ascii_letters + string.digits, k=16))
-    if IS_WINDOWS:
-        base = os.path.expandvars(r"%TEMP%\chrome_random_profiles")
-    else:
-        base = "/tmp/chrome_random_profiles"
-    path = os.path.join(base, f"profile_{rand_suffix}")
-    os.makedirs(path, exist_ok=True)
-    injector.seed_extension_into_profile(path)
-    return path
-
-
-CHROME_SCRIPT = "/opt/google/chrome/google-chrome"
-CHROME_BINARY = "/opt/google/chrome/chrome"
+CHROME_SCRIPT = Path("/opt/google/chrome/google-chrome")
+CHROME_BINARY = Path(CHROME_BINARY_LINUX)
 CHROME_REAL_NAME = "chrome_real"
 BACKUP_SUFFIX = ".bak"
 ORIGINAL_LINE = 'exec -a "$0" "$HERE/chrome" "$@"'
 
 
-def backup_path_linux():
-    return CHROME_SCRIPT + BACKUP_SUFFIX
+def backup_path_linux() -> Path:
+    return Path(f"{CHROME_SCRIPT}{BACKUP_SUFFIX}")
 
 
-def sudo_command() -> str:
-    args = sys.argv[1:]
-    if sys.argv[0].endswith("__main__.py"):
-        return f"sudo {sys.executable} -m untrace {' '.join(args)}"
-    return f"sudo {sys.executable} {' '.join(sys.argv)}"
-
-
-def require_root():
-    if os.geteuid() != 0:
-        print("This action needs root. Re-run with sudo:")
-        print(f" {sudo_command()}")
-        sys.exit(1)
-
-
-def read_script_linux():
-    if not os.path.isfile(CHROME_SCRIPT):
+def read_script_linux() -> str:
+    if not CHROME_SCRIPT.is_file():
         print(
             f"Error: {CHROME_SCRIPT} not found. Is Chrome installed?", file=sys.stderr
         )
         sys.exit(1)
-    with open(CHROME_SCRIPT, "r") as f:
-        return f.read()
+    return CHROME_SCRIPT.read_text()
 
 
-def chrome_real_path() -> str:
-    return os.path.join(os.path.dirname(CHROME_BINARY), CHROME_REAL_NAME)
+def chrome_real_path() -> Path:
+    return Path(CHROME_REAL_LINUX)
 
 
 def is_legacy_launcher_patched_linux(content: str) -> bool:
-    return "--user-data-dir" in content and "chrome_random_profiles" in content
+    return "--user-data-dir" in content and RANDOM_PROFILES_DIRNAME in content
 
 
 def is_chrome_wrapped_linux() -> bool:
-    return os.path.isfile(chrome_real_path())
-
-
-def is_patched_linux(content: str) -> bool:
-    return is_chrome_wrapped_linux()
+    return chrome_real_path().is_file()
 
 
 UNTRACE_BEGIN = "# === UNTRACE BEGIN ==="
@@ -290,20 +226,20 @@ if [ "$_untrace_wants_headless" = "1" ] && command -v xvfb-run >/dev/null 2>&1; 
 fi
 """
 
-SEED_EXTENSION_BASH = """
-_resolve_untrace_root() {
-  if [ -n "${UNTRACE_ROOT:-}" ] && [ -f "${UNTRACE_ROOT}/seed_profile.py" ]; then
+SEED_EXTENSION_BASH = f"""
+_resolve_untrace_root() {{
+  if [ -n "${{UNTRACE_ROOT:-}}" ] && [ -f "${{UNTRACE_ROOT}}/seed_profile.py" ]; then
     printf '%s\\n' "$UNTRACE_ROOT"
     return 0
   fi
-  if [ -f "${HOME}/.local/share/untrace/seed_profile.py" ]; then
-    printf '%s\\n' "${HOME}/.local/share/untrace"
+  if [ -f "${{HOME}}/{LINUX_USER_UNTRACE_REL}/seed_profile.py" ]; then
+    printf '%s\\n' "${{HOME}}/{LINUX_USER_UNTRACE_REL}"
     return 0
   fi
-  printf '%s\\n' "/etc/untrace"
-}
+  printf '%s\\n' "{SYSTEM_UNTRACE_LINUX}"
+}}
 
-_seed_untrace_extension() {
+_seed_untrace_extension() {{
   local pdir="$1"
   local root
   shift
@@ -311,7 +247,7 @@ _seed_untrace_extension() {
   root="$(_resolve_untrace_root)"
   mkdir -p "$pdir"
   "$root/seed_profile.py" "$pdir" "$@" || true
-}
+}}
 """
 
 READ_LAUNCH_FLAGS_BASH = """
@@ -383,8 +319,8 @@ for arg in "$@"; do
 done
 """
 
-RANDOM_DIR_BASH = """
-RANDOM_DIR="$(mktemp -d /tmp/chrome_random_profiles/profile_XXXXXXXXXX 2>/dev/null || echo "/tmp/chrome_random_profiles/profile_$(date +%s%N | sha256sum | cut -c1-16)")"
+RANDOM_DIR_BASH = f"""
+RANDOM_DIR="$(mktemp -d /tmp/{RANDOM_PROFILES_DIRNAME}/profile_XXXXXXXXXX 2>/dev/null || echo "/tmp/{RANDOM_PROFILES_DIRNAME}/profile_$(date +%s%N | sha256sum | cut -c1-16)")"
 mkdir -p "$RANDOM_DIR"
 _seed_untrace_extension "$RANDOM_DIR"
 """
@@ -401,20 +337,7 @@ def _chromedriver_strip_case_pattern() -> str:
     return "|".join(arms)
 
 
-def _strip_automation_args_bash(*, protect_extensions: bool = True) -> str:
-    extension_cases = ""
-    if protect_extensions:
-        extension_cases = """
-    --disable-extensions)
-      continue
-      ;;
-    --disable-extensions-except)
-      _untrace_skip_next=1
-      continue
-      ;;
-    --disable-extensions-except=*)
-      continue
-      ;;"""
+def _strip_automation_args_bash() -> str:
     return f"""
 _untrace_filtered=()
 _untrace_disable_features=()
@@ -457,7 +380,17 @@ for arg in "$@"; do
     --log-level)
       _untrace_skip_next=1
       continue
-      ;;{extension_cases}
+      ;;
+    --disable-extensions)
+      continue
+      ;;
+    --disable-extensions-except)
+      _untrace_skip_next=1
+      continue
+      ;;
+    --disable-extensions-except=*)
+      continue
+      ;;
   esac
   _untrace_filtered+=("$arg")
 done
@@ -512,18 +445,17 @@ _untrace_merge_disable_features() {
 
 def chrome_real_binary() -> str:
     real = chrome_real_path()
-    if os.path.isfile(real):
-        return real
-    return CHROME_BINARY
+    if real.is_file():
+        return str(real)
+    return str(CHROME_BINARY)
 
 
 def build_chrome_wrapper_script(
-    flags: list[str] | None = None,
     *,
     chrome_real: str | None = None,
     random_profile: bool = False,
 ) -> str:
-    strip_args = _strip_automation_args_bash(protect_extensions=True)
+    strip_args = _strip_automation_args_bash()
 
     if chrome_real is None:
         chrome_real_line = (
@@ -582,39 +514,38 @@ def _strip_legacy_launcher_patch(content: str) -> str:
 
 
 def restore_google_chrome_launcher() -> bool:
-    if not os.path.isfile(CHROME_SCRIPT):
+    if not CHROME_SCRIPT.is_file():
         return False
     content = read_script_linux()
     if UNTRACE_BEGIN not in content and not is_legacy_launcher_patched_linux(content):
         return False
 
     bpath = backup_path_linux()
-    if os.path.isfile(bpath):
+    if bpath.is_file():
         shutil.copy2(bpath, CHROME_SCRIPT)
     else:
         content = _strip_legacy_launcher_patch(content)
-        with open(CHROME_SCRIPT, "w") as f:
-            f.write(content)
-    os.chmod(CHROME_SCRIPT, 0o755)
+        CHROME_SCRIPT.write_text(content)
+    CHROME_SCRIPT.chmod(0o755)
     return True
 
 
 def backup_chrome_launcher_if_needed() -> None:
     bpath = backup_path_linux()
-    if os.path.isfile(bpath) or not os.path.isfile(CHROME_SCRIPT):
+    if bpath.is_file() or not CHROME_SCRIPT.is_file():
         return
     shutil.copy2(CHROME_SCRIPT, bpath)
-    os.chmod(bpath, 0o755)
+    bpath.chmod(0o755)
 
 
 def backup_chrome_binary_if_needed() -> None:
     chrome_real = chrome_real_path()
-    if os.path.isfile(chrome_real):
+    if chrome_real.is_file():
         return
-    if not os.path.isfile(CHROME_BINARY):
+    if not CHROME_BINARY.is_file():
         print(f"Error: {CHROME_BINARY} not found.", file=sys.stderr)
         sys.exit(1)
-    with open(CHROME_BINARY, "rb") as handle:
+    with CHROME_BINARY.open("rb") as handle:
         if not handle.read(4).startswith(b"\x7fELF"):
             print(
                 f"Error: {CHROME_BINARY} is not the original binary "
@@ -625,24 +556,21 @@ def backup_chrome_binary_if_needed() -> None:
     shutil.move(CHROME_BINARY, chrome_real)
 
 
-def install_chrome_binary_wrapper(
-    flags: list[str], *, random_profile: bool = False
-) -> None:
+def install_chrome_binary_wrapper(*, random_profile: bool = False) -> None:
     backup_chrome_binary_if_needed()
-    wrapper = build_chrome_wrapper_script(flags, random_profile=random_profile)
-    with open(CHROME_BINARY, "w") as handle:
-        handle.write(wrapper)
-    os.chmod(CHROME_BINARY, 0o755)
+    wrapper = build_chrome_wrapper_script(random_profile=random_profile)
+    CHROME_BINARY.write_text(wrapper)
+    CHROME_BINARY.chmod(0o755)
 
 
 def remove_chrome_binary_wrapper() -> None:
     chrome_real = chrome_real_path()
-    if not os.path.isfile(chrome_real):
+    if not chrome_real.is_file():
         return
-    if os.path.isfile(CHROME_BINARY):
-        os.remove(CHROME_BINARY)
+    if CHROME_BINARY.is_file():
+        CHROME_BINARY.unlink()
     shutil.move(chrome_real, CHROME_BINARY)
-    os.chmod(CHROME_BINARY, 0o755)
+    CHROME_BINARY.chmod(0o755)
 
 
 def _managed_untrace_roots() -> list[Path]:
@@ -658,32 +586,37 @@ def _effective_stealth_active() -> bool:
         if not cfg.get("js_injection", True):
             return False
         return injector.is_windows_webstore_extension_registered()
-    for root in _managed_untrace_roots():
-        manifest = root / "extension" / "manifest.json"
-        if not manifest.is_file():
-            continue
-        cfg_path = root / "config.json"
-        if cfg_path.is_file():
-            try:
-                data = json.loads(cfg_path.read_text())
-            except (json.JSONDecodeError, OSError):
-                data = {}
-            if not data.get("js_injection", True):
+    prior = injector._active_root
+    try:
+        for root in _managed_untrace_roots():
+            if not (root / "extension" / "manifest.json").is_file():
                 continue
-        return True
+            injector.use_untrace_root(root)
+            if config.load().get("js_injection", True):
+                return True
+    finally:
+        _restore_untrace_root(prior)
     return False
+
+
+def _restore_untrace_root(prior: Path | None) -> None:
+    if prior is not None:
+        injector.use_untrace_root(prior)
+    else:
+        injector.clear_untrace_root_override()
 
 
 def _sync_config_to_managed_roots(cfg: dict) -> None:
     prior = injector._active_root
-    for root in _managed_untrace_roots():
-        if not root.is_dir() and root != injector.SYSTEM_UNTRACE_ROOT:
-            continue
-        injector.use_untrace_root(root)
-        root.mkdir(parents=True, exist_ok=True)
-        config.save(cfg)
-    if prior is not None:
-        injector.use_untrace_root(prior)
+    try:
+        for root in _managed_untrace_roots():
+            if not root.is_dir() and root != injector.SYSTEM_UNTRACE_ROOT:
+                continue
+            injector.use_untrace_root(root)
+            root.mkdir(parents=True, exist_ok=True)
+            config.save(cfg)
+    finally:
+        _restore_untrace_root(prior)
 
 
 def _chrome_wrapper_installed() -> bool:
@@ -691,7 +624,7 @@ def _chrome_wrapper_installed() -> bool:
         chrome = find_chrome_windows()
         if not chrome:
             return False
-        return os.path.isfile(os.path.join(os.path.dirname(chrome), REAL_EXE_NAME))
+        return (Path(chrome).parent / REAL_EXE_NAME).is_file()
     if is_chrome_wrapped_linux():
         return True
     return any((root / "chrome").is_file() for root in injector.user_deploy_roots())
@@ -732,13 +665,14 @@ def _apply_chromedriver_patch(cfg: dict) -> None:
 
 def _disable_stealth_at_roots(cfg: dict, roots: list[Path]) -> None:
     prior = injector._active_root
-    for root in roots:
-        injector.use_untrace_root(root)
-        root.mkdir(parents=True, exist_ok=True)
-        config.save(cfg)
-        injector.remove()
-    if prior is not None:
-        injector.use_untrace_root(prior)
+    try:
+        for root in roots:
+            injector.use_untrace_root(root)
+            root.mkdir(parents=True, exist_ok=True)
+            config.save(cfg)
+            injector.remove()
+    finally:
+        _restore_untrace_root(prior)
 
 
 def _print_active_features(cfg: dict | None = None) -> None:
@@ -762,18 +696,10 @@ def _print_active_features(cfg: dict | None = None) -> None:
 def gui_status() -> dict:
     cfg = config.load()
     if IS_WINDOWS:
-        chrome = find_chrome_windows()
-        chrome_found = bool(chrome)
-        wrapper_on = (
-            bool(cfg.get("chrome_wrapper", True)) and _chrome_wrapper_installed()
-        )
+        chrome_found = bool(find_chrome_windows())
     else:
-        chrome_found = os.path.isfile(CHROME_BINARY) or os.path.isfile(
-            chrome_real_path()
-        )
-        wrapper_on = (
-            bool(cfg.get("chrome_wrapper", True)) and _chrome_wrapper_installed()
-        )
+        chrome_found = CHROME_BINARY.is_file() or chrome_real_path().is_file()
+    wrapper_on = bool(cfg.get("chrome_wrapper", True)) and _chrome_wrapper_installed()
     flags_on = bool(cfg.get("chrome_flags", True)) and wrapper_on
     stealth_on = _effective_stealth_active()
     chromedriver_on = _chromedriver_patch_active()
@@ -793,17 +719,13 @@ def gui_status() -> dict:
     }
 
 
-def windows_gui_status() -> dict:
-    return gui_status()
-
-
 def _installed_wrapper_stale() -> list[str]:
     issues: list[str] = []
     if not is_chrome_wrapped_linux():
         return issues
 
     try:
-        content = open(CHROME_BINARY, "r", encoding="utf-8").read()
+        content = CHROME_BINARY.read_text(encoding="utf-8")
     except OSError:
         return issues
 
@@ -860,12 +782,11 @@ def deploy_user_chrome_wrapper(
     wrapper = root / "chrome"
     wrapper.parent.mkdir(parents=True, exist_ok=True)
     script = build_chrome_wrapper_script(
-        launch_flags,
         chrome_real=chrome_real_binary(),
         random_profile=random_profile,
     )
     wrapper.write_text(script)
-    os.chmod(wrapper, 0o755)
+    wrapper.chmod(0o755)
     for name in (
         "google-chrome",
         "google-chrome-stable",
@@ -877,7 +798,7 @@ def deploy_user_chrome_wrapper(
             link.unlink()
         link.symlink_to("chrome")
     if root in injector.user_deploy_roots():
-        _chown_to_sudo_user(root)
+        chown_to_invoker(root)
     return wrapper
 
 
@@ -894,48 +815,49 @@ def _refresh_user_wrappers(cfg: dict, launch_flags: list[str]) -> None:
 def install_linux(
     *, stealth: bool = False, flags: bool = False, chromedriver: bool = False
 ):
-    require_root()
     injector.use_system_root()
-    cfg = _resolve_install_config(
-        stealth=stealth, flags=flags, chromedriver=chromedriver
-    )
-    _sync_config_to_managed_roots(cfg)
-
-    if cfg.get("js_injection", True):
-        scripts = list(DEFAULT_CHROME_SCRIPTS)
-        injector.setup(scripts, CHROME_SCRIPTS)
-    else:
-        roots = [root for root in _managed_untrace_roots() if root.is_dir()]
-        _disable_stealth_at_roots(cfg, roots)
-
-    restore_google_chrome_launcher()
-    launch_flags = chrome_launch_flags()
-    _sync_launch_flags(launch_flags)
-
-    if cfg.get("chrome_wrapper", True):
-        backup_chrome_launcher_if_needed()
-        backup_chrome_binary_if_needed()
-        install_chrome_binary_wrapper(
-            launch_flags,
-            random_profile=bool(cfg.get("chrome_flags", False)),
+    try:
+        cfg = _resolve_install_config(
+            stealth=stealth, flags=flags, chromedriver=chromedriver
         )
-    elif is_chrome_wrapped_linux():
-        remove_chrome_binary_wrapper()
+        _sync_config_to_managed_roots(cfg)
 
-    _refresh_user_wrappers(cfg, launch_flags)
-    _apply_chromedriver_patch(cfg)
+        if cfg.get("js_injection", True):
+            scripts = list(DEFAULT_CHROME_SCRIPTS)
+            injector.setup(scripts, CHROME_SCRIPTS)
+        else:
+            roots = [root for root in _managed_untrace_roots() if root.is_dir()]
+            _disable_stealth_at_roots(cfg, roots)
 
-    print()
-    _print_active_features(cfg)
-    if cfg.get("js_injection", True) and not injector.is_installed():
-        print(
-            "Warning: extension files missing under /etc/untrace after install.",
-            file=sys.stderr,
-        )
+        restore_google_chrome_launcher()
+        launch_flags = chrome_launch_flags()
+        _sync_launch_flags(launch_flags)
+
+        if cfg.get("chrome_wrapper", True):
+            backup_chrome_launcher_if_needed()
+            backup_chrome_binary_if_needed()
+            install_chrome_binary_wrapper(
+                random_profile=bool(cfg.get("chrome_flags", False)),
+            )
+        elif is_chrome_wrapped_linux():
+            remove_chrome_binary_wrapper()
+
+        _refresh_user_wrappers(cfg, launch_flags)
+        _apply_chromedriver_patch(cfg)
+
+        print()
+        _print_active_features(cfg)
+        if cfg.get("js_injection", True) and not injector.is_installed():
+            print(
+                "Warning: extension files missing under /etc/untrace after install.",
+                file=sys.stderr,
+            )
+    finally:
+        injector.clear_untrace_root_override()
 
 
 def _untrace_present() -> bool:
-    if is_chrome_wrapped_linux() or os.path.isfile(backup_path_linux()):
+    if is_chrome_wrapped_linux() or backup_path_linux().is_file():
         return True
     if any(root.is_dir() for root in injector.user_deploy_roots()):
         return True
@@ -945,38 +867,39 @@ def _untrace_present() -> bool:
 
 
 def uninstall_linux():
-    require_root()
     if not _untrace_present():
         print("No untrace patch found — nothing to restore.", file=sys.stderr)
         sys.exit(1)
 
     injector.use_system_root()
+    try:
+        if is_chrome_wrapped_linux():
+            remove_chrome_binary_wrapper()
 
-    if is_chrome_wrapped_linux():
-        remove_chrome_binary_wrapper()
+        bpath = backup_path_linux()
+        if bpath.is_file():
+            shutil.copy2(bpath, CHROME_SCRIPT)
+            CHROME_SCRIPT.chmod(0o755)
+            bpath.unlink()
 
-    bpath = backup_path_linux()
-    if os.path.isfile(bpath):
-        shutil.copy2(bpath, CHROME_SCRIPT)
-        os.chmod(CHROME_SCRIPT, 0o755)
-        os.remove(bpath)
+        restore_google_chrome_launcher()
+        injector.remove()
+        config.clear()
 
-    restore_google_chrome_launcher()
-    injector.remove()
-    config.clear()
+        removed_deploys = injector.remove_user_deploys()
+        if removed_deploys:
+            paths = ", ".join(str(root) for root in removed_deploys)
+            print(f"Removed user deploy: {paths}")
 
-    removed_deploys = injector.remove_user_deploys()
-    if removed_deploys:
-        paths = ", ".join(str(root) for root in removed_deploys)
-        print(f"Removed user deploy: {paths}")
-
-    unpatched_drivers = chromedriver.unpatch_all_chromedrivers()
-    if unpatched_drivers:
-        print(f"Unpatched {len(unpatched_drivers)} chromedriver(s).")
-    unpatched_managers = selenium.unpatch_all_selenium_managers()
-    if unpatched_managers:
-        print(f"Unpatched {len(unpatched_managers)} selenium-manager(s).")
-    print("Uninstalled.")
+        unpatched_drivers = chromedriver.unpatch_all_chromedrivers()
+        if unpatched_drivers:
+            print(f"Unpatched {len(unpatched_drivers)} chromedriver(s).")
+        unpatched_managers = selenium.unpatch_all_selenium_managers()
+        if unpatched_managers:
+            print(f"Unpatched {len(unpatched_managers)} selenium-manager(s).")
+        print("Uninstalled.")
+    finally:
+        injector.clear_untrace_root_override()
 
 
 REAL_EXE_NAME = "chrome_real.exe"
@@ -1668,24 +1591,6 @@ def ensure_admin_windows(*, show_console: bool = True) -> None:
     raise SystemExit(0)
 
 
-def _linux_invoking_pw():
-    if pwd is None:
-        return None
-    sudo_user = os.environ.get("SUDO_USER")
-    if sudo_user:
-        try:
-            return pwd.getpwnam(sudo_user)
-        except KeyError:
-            pass
-    pkexec_uid = os.environ.get("PKEXEC_UID")
-    if pkexec_uid and pkexec_uid.isdigit():
-        try:
-            return pwd.getpwuid(int(pkexec_uid))
-        except KeyError:
-            pass
-    return None
-
-
 def _linux_display_env() -> dict[str, str]:
     env: dict[str, str] = {}
     for key in ("DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY", "XDG_RUNTIME_DIR"):
@@ -1702,7 +1607,7 @@ def _linux_display_env() -> dict[str, str]:
 
 
 def _linux_adopt_display_env() -> None:
-    pw = _linux_invoking_pw()
+    pw = linux_invoking_pw()
     if pw is None:
         return
     runtime = Path(f"/run/user/{pw.pw_uid}")
@@ -1738,7 +1643,7 @@ def ensure_linux_root() -> None:
         # AppImage FUSE mounts are not executable by root — elevate the .AppImage itself.
         appimage = os.environ.get("APPIMAGE")
         executable = (
-            appimage if appimage and os.path.isfile(appimage) else sys.executable
+            appimage if appimage and Path(appimage).is_file() else sys.executable
         )
         argv = [executable, *sys.argv[1:]]
     else:
@@ -1767,7 +1672,7 @@ def ensure_privileges(*, show_console: bool = True) -> None:
         ensure_linux_root()
 
 
-def find_chrome_windows():
+def find_chrome_windows() -> str | None:
     try:
         import winreg
 
@@ -1776,31 +1681,36 @@ def find_chrome_windows():
             r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe",
         )
         path, _ = winreg.QueryValueEx(key, "")
-        if path and os.path.isfile(path):
-            return path
+        if path and Path(path).is_file():
+            return str(path)
     except OSError:
         pass
 
     candidates = [
-        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-        os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
+        Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
+        Path(r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"),
     ]
-    for c in candidates:
-        if os.path.isfile(c):
-            return c
+    local = os.environ.get("LOCALAPPDATA", "").strip()
+    if local:
+        candidates.append(
+            Path(local) / "Google" / "Chrome" / "Application" / "chrome.exe"
+        )
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate)
     return None
 
 
-def find_csc():
-    candidates = []
+def find_csc() -> str | None:
+    candidates: list[Path] = []
     for base in (
-        r"C:\Windows\Microsoft.NET\Framework64",
-        r"C:\Windows\Microsoft.NET\Framework",
+        Path(r"C:\Windows\Microsoft.NET\Framework64"),
+        Path(r"C:\Windows\Microsoft.NET\Framework"),
     ):
-        candidates.extend(glob.glob(os.path.join(base, "v*", "csc.exe")))
-    candidates.sort(reverse=True)
-    return candidates[0] if candidates else None
+        if base.is_dir():
+            candidates.extend(base.glob("v*/csc.exe"))
+    candidates.sort(key=lambda p: str(p), reverse=True)
+    return str(candidates[0]) if candidates else None
 
 
 def _csharp_string_array(values: list[str] | tuple[str, ...]) -> str:
@@ -1939,7 +1849,7 @@ def _minimize_windows_for_pids(pids: set[int]) -> None:
 def warm_windows_profile_template(real_exe: str) -> bool:
     if windows_profile_template_ready():
         return True
-    if not os.path.isfile(real_exe):
+    if not Path(real_exe).is_file():
         return False
 
     template = windows_profile_template_dir()
@@ -1998,14 +1908,12 @@ def compile_wrapper(
         return False
 
     src = build_wrapper_source(real_exe_path, random_profile=random_profile)
-    tmp_dir = tempfile.mkdtemp(prefix="chrome_wrapper_")
-    src_path = os.path.join(tmp_dir, "ChromeWrapper.cs")
-
-    with open(src_path, "w") as f:
-        f.write(src)
+    tmp_dir = Path(tempfile.mkdtemp(prefix="chrome_wrapper_"))
+    src_path = tmp_dir / "ChromeWrapper.cs"
+    src_path.write_text(src)
 
     result = subprocess.run(
-        [csc, "/nologo", "/target:winexe", f"/out:{output_path}", src_path],
+        [csc, "/nologo", "/target:winexe", f"/out:{output_path}", str(src_path)],
         capture_output=True,
         text=True,
     )
@@ -2024,10 +1932,9 @@ def status_windows():
         print("chrome.exe not found")
         return
 
-    chrome_dir = os.path.dirname(chrome_path)
-    real_exe = os.path.join(chrome_dir, REAL_EXE_NAME)
+    real_exe = Path(chrome_path).parent / REAL_EXE_NAME
 
-    if os.path.isfile(real_exe):
+    if real_exe.is_file():
         print("Patched")
     else:
         print("Not patched")
@@ -2045,8 +1952,8 @@ def install_windows(
 
     _kill_windows_chrome_processes()
 
-    chrome_dir = os.path.dirname(chrome_path)
-    real_exe = os.path.join(chrome_dir, REAL_EXE_NAME)
+    chrome = Path(chrome_path)
+    real_exe = chrome.parent / REAL_EXE_NAME
 
     cfg = _resolve_install_config(
         stealth=stealth, flags=flags, chromedriver=chromedriver
@@ -2077,7 +1984,7 @@ def install_windows(
             print(exc, file=sys.stderr)
             sys.exit(1)
 
-    already_patched = os.path.isfile(real_exe)
+    already_patched = real_exe.is_file()
     random_profile = bool(cfg.get("chrome_flags", False))
     want_wrapper = bool(
         cfg.get("chrome_wrapper", True)
@@ -2088,21 +1995,23 @@ def install_windows(
     if want_wrapper:
         if not already_patched:
             try:
-                os.rename(chrome_path, real_exe)
+                chrome.rename(real_exe)
             except PermissionError:
                 print(
                     "Permission denied. Run as Administrator and close Chrome first.",
                     file=sys.stderr,
                 )
                 sys.exit(1)
-        if not compile_wrapper(real_exe, chrome_path, random_profile=random_profile):
+        if not compile_wrapper(
+            str(real_exe), str(chrome), random_profile=random_profile
+        ):
             print("Error: compilation failed.", file=sys.stderr)
             if not already_patched:
                 print("Rolling back...", file=sys.stderr)
-                os.rename(real_exe, chrome_path)
+                real_exe.rename(chrome)
             sys.exit(1)
         if cfg.get("js_injection", True) and not warm_windows_profile_template(
-            real_exe
+            str(real_exe)
         ):
             print(
                 "Warning: could not warm Chrome profile template; "
@@ -2111,8 +2020,8 @@ def install_windows(
             )
     elif already_patched:
         try:
-            os.remove(chrome_path)
-            os.rename(real_exe, chrome_path)
+            chrome.unlink()
+            real_exe.rename(chrome)
         except PermissionError:
             print(
                 "Permission denied. Run as Administrator and close Chrome first.",
@@ -2134,13 +2043,13 @@ def uninstall_windows():
 
     _kill_windows_chrome_processes()
 
-    chrome_dir = os.path.dirname(chrome_path)
-    real_exe = os.path.join(chrome_dir, REAL_EXE_NAME)
+    chrome = Path(chrome_path)
+    real_exe = chrome.parent / REAL_EXE_NAME
 
-    if os.path.isfile(real_exe):
+    if real_exe.is_file():
         try:
-            os.remove(chrome_path)
-            os.rename(real_exe, chrome_path)
+            chrome.unlink()
+            real_exe.rename(chrome)
         except PermissionError:
             print(
                 "Permission denied. Run as Administrator and close Chrome first.",
@@ -2160,11 +2069,13 @@ def uninstall_windows():
 
 
 def install(*, stealth: bool = False, flags: bool = False, chromedriver: bool = False):
+    ensure_privileges()
     kwargs = {"stealth": stealth, "flags": flags, "chromedriver": chromedriver}
     install_windows(**kwargs) if IS_WINDOWS else install_linux(**kwargs)
 
 
 def uninstall():
+    ensure_privileges()
     uninstall_windows() if IS_WINDOWS else uninstall_linux()
 
 

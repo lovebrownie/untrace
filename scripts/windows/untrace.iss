@@ -1,9 +1,16 @@
 ; Untrace Windows installer — compiled by ISCC from scripts/build.py
 ; Defines passed on the command line:
-;   MyAppVersion, SourceExe, RepoRoot, OutputDir, VcRedist, InnoSetupInstaller
+;   MyAppVersion, MyAppPublisher, MyAppCopyright,
+;   SourceExe, RepoRoot, OutputDir, VcRedist, InnoSetupInstaller
 
 #ifndef MyAppVersion
   #define MyAppVersion "0.1.0"
+#endif
+#ifndef MyAppPublisher
+  #define MyAppPublisher "Untrace"
+#endif
+#ifndef MyAppCopyright
+  #define MyAppCopyright "Copyright (C) 2026"
 #endif
 #ifndef SourceExe
   #define SourceExe "untrace.exe"
@@ -22,7 +29,6 @@
 #endif
 
 #define MyAppName "Untrace"
-#define MyAppPublisher "carlos"
 #define MyAppExeName "untrace.exe"
 #define VcRedistFile ExtractFileName(VcRedist)
 #define InnoSetupFile ExtractFileName(InnoSetupInstaller)
@@ -52,7 +58,7 @@ MinVersion=10.0
 VersionInfoVersion={#MyAppVersion}.0
 VersionInfoCompany={#MyAppPublisher}
 VersionInfoDescription={#MyAppName} setup
-VersionInfoCopyright=Copyright (C) 2026 carlos
+VersionInfoCopyright={#MyAppCopyright}
 VersionInfoProductName={#MyAppName}
 VersionInfoProductVersion={#MyAppVersion}
 

@@ -6,7 +6,7 @@ import shutil
 import stat
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -23,9 +23,12 @@ if str(ROOT) not in sys.path:
 
 from untrace.version import (
     __version__,
+    author_contact,
+    author_name,
     extension_zip_name,
     gui_artifact_name,
     gui_exe_name,
+    read_project,
     windows_zip_name,
 )
 
@@ -45,27 +48,6 @@ def _linux_deb_arch() -> str:
     raise RuntimeError(f"unsupported deb arch: {machine}")
 
 
-def _read_project_meta() -> dict:
-    try:
-        import tomllib
-    except ModuleNotFoundError:  # pragma: no cover
-        import tomli as tomllib  # type: ignore
-
-    data = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
-    return dict(data.get("project") or {})
-
-
-def _deb_maintainer(meta: dict) -> str:
-    authors = meta.get("authors") or []
-    if authors and isinstance(authors[0], dict):
-        name = str(authors[0].get("name") or "carlos").strip()
-        email = str(authors[0].get("email") or "").strip()
-        if email:
-            return f"{name} <{email}>"
-        return f"{name} <carlos@users.noreply.github.com>"
-    return "carlos <carlos@users.noreply.github.com>"
-
-
 def _pack_linux_deb(binary: Path, *, version: str) -> Path:
     if not binary.is_file():
         raise FileNotFoundError(binary)
@@ -75,7 +57,7 @@ def _pack_linux_deb(binary: Path, *, version: str) -> Path:
     if shutil.which("dpkg-deb") is None:
         raise RuntimeError("dpkg-deb not found (install dpkg)")
 
-    meta = _read_project_meta()
+    meta = read_project()
     ver = version.lstrip("vV")
     arch = _linux_deb_arch()
     pkg_name = f"untrace_{ver}_{arch}"
@@ -140,7 +122,7 @@ def _pack_linux_deb(binary: Path, *, version: str) -> Path:
         icon_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, icon_dir / "untrace.png")
 
-    maintainer = _deb_maintainer(meta)
+    maintainer = author_contact()
     license_id = str(meta.get("license") or "MIT")
     summary = str(
         meta.get("description") or "Untrace Chrome stealth install manager"
@@ -149,6 +131,7 @@ def _pack_linux_deb(binary: Path, *, version: str) -> Path:
     urls = meta.get("urls") if isinstance(meta.get("urls"), dict) else {}
     if urls:
         homepage = str(urls.get("Homepage") or urls.get("Repository") or "").strip()
+    year = datetime.now(UTC).year
 
     control_lines = [
         "Package: untrace",
@@ -181,7 +164,7 @@ def _pack_linux_deb(binary: Path, *, version: str) -> Path:
                 f"Source: {homepage}" if homepage else "Source: local",
                 "",
                 "Files: *",
-                "Copyright: 2026 carlos",
+                f"Copyright: {year} {author_name()}",
                 f"License: {license_id}",
                 "",
                 f"License: {license_id}",
@@ -193,7 +176,7 @@ def _pack_linux_deb(binary: Path, *, version: str) -> Path:
     )
 
     changelog = doc_dir / "changelog.Debian"
-    stamp = datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S +0000")
+    stamp = datetime.now(UTC).strftime("%a, %d %b %Y %H:%M:%S +0000")
     changelog.write_text(
         "\n".join(
             [
@@ -290,9 +273,13 @@ def _pack_windows_setup(binary: Path, *, version: str) -> Path:
     if out.exists():
         out.unlink()
 
+    publisher = author_name()
+    copyright_text = f"Copyright (C) {datetime.now(UTC).year} {publisher}"
     cmd = [
         str(iscc),
         f"/DMyAppVersion={ver}",
+        f"/DMyAppPublisher={publisher}",
+        f"/DMyAppCopyright={copyright_text}",
         f"/DSourceExe={binary.resolve()}",
         f"/DRepoRoot={ROOT.resolve()}",
         f"/DOutputDir={DIST.resolve()}",
@@ -320,7 +307,10 @@ def _download_file(url: str, dest: Path) -> Path:
     partial = dest.with_suffix(dest.suffix + ".partial")
     print(f"download: {url}")
     try:
-        with urllib.request.urlopen(url, timeout=120) as resp, partial.open("wb") as out:
+        with (
+            urllib.request.urlopen(url, timeout=120) as resp,
+            partial.open("wb") as out,
+        ):
             shutil.copyfileobj(resp, out)
     except (urllib.error.URLError, OSError) as exc:
         if partial.exists():

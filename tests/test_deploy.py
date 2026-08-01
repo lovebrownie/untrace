@@ -13,12 +13,10 @@ def test_user_deploy_roots_includes_sudo_user(monkeypatch, tmp_path):
     root_home = tmp_path / "root"
     testuser_home.mkdir()
     root_home.mkdir()
-    monkeypatch.setattr(injector.Path, "home", lambda: root_home)
-    monkeypatch.setenv("SUDO_USER", "testuser")
     monkeypatch.setattr(
-        injector.pwd,
-        "getpwnam",
-        lambda name: type("Pw", (), {"pw_dir": str(testuser_home)})(),
+        injector,
+        "home_dirs_to_search",
+        lambda: [root_home, testuser_home],
     )
 
     roots = injector.user_deploy_roots()
@@ -36,12 +34,10 @@ def test_remove_user_deploys_deletes_sudo_user_tree(monkeypatch, tmp_path):
     (deploy / "extension" / "manifest.json").parent.mkdir(parents=True)
     (deploy / "extension" / "manifest.json").write_text("{}")
 
-    monkeypatch.setattr(injector.Path, "home", lambda: root_home)
-    monkeypatch.setenv("SUDO_USER", "testuser")
     monkeypatch.setattr(
-        injector.pwd,
-        "getpwnam",
-        lambda name: type("Pw", (), {"pw_dir": str(testuser_home)})(),
+        injector,
+        "home_dirs_to_search",
+        lambda: [root_home, testuser_home],
     )
 
     removed = injector.remove_user_deploys()

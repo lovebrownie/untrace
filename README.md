@@ -175,6 +175,9 @@ uv sync --group dev
 uv run task lint          # format + fix with Ruff
 uv run task lint-check    # verify only (CI)
 uv run task gui
+uv run task install       # full stack (elevates)
+uv run task uninstall
+uv run task status
 uv run task build         # Setup.exe / .deb + extension zip → dist/
 uv run task build-gui     # installer artifact only
 uv run task pack-extension

@@ -6,7 +6,7 @@ on:
   pull_request:
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -14,12 +14,16 @@ permissions:
 
 jobs:
   test:
-    name: Test ${{ matrix.os }}
+    name: Test (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: true
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            name: Linux
+          - os: windows-latest
+            name: Windows
 
     steps:
       - uses: actions/checkout@v4
@@ -35,35 +39,24 @@ jobs:
         run: poetry install --with dev
 
       - name: Lint
+        if: runner.os == 'Linux'
         run: poetry run task lint-check
 
       - name: Unit tests
         run: poetry run pytest --ignore=tests/test_chromedriver.py -q
 
-  tests-passed:
-    name: Tests passed
-    needs: test
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-      - name: Require all test jobs to succeed
-        run: |
-          result="${{ needs.test.result }}"
-          echo "test matrix result: ${result}"
-          if [ "${result}" != "success" ]; then
-            echo "Build blocked: one or more test jobs failed or were cancelled"
-            exit 1
-          fi
-
   build:
-    name: Build ${{ matrix.os }}
-    needs: tests-passed
-    if: success()
+    name: Build (${{ matrix.name }})
+    needs: test
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            name: Linux
+          - os: windows-latest
+            name: Windows
 
     steps:
       - uses: actions/checkout@v4
@@ -78,7 +71,7 @@ jobs:
       - name: Install dependencies
         run: poetry install --with dev
 
-      - name: Install Linux GUI build deps
+      - name: Install Linux build deps
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
@@ -99,29 +92,13 @@ jobs:
         shell: bash
         run: echo "version=$(poetry version -s)" >> "$GITHUB_OUTPUT"
 
-      - name: Build dist (Windows)
-        if: runner.os == 'Windows'
+      - name: Build
         run: poetry run task build
-
-      - name: Build dist (Linux)
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          if poetry run python -c "import tkinter" 2>/dev/null; then
-            poetry run task build
-          else
-            echo "tkinter unavailable; packing extension zip only"
-            poetry run task pack-extension
-          fi
-
-      - name: List dist
-        shell: bash
-        run: ls -la dist
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: untrace-${{ runner.os }}-v${{ steps.ver.outputs.version }}
+          name: untrace-${{ matrix.name }}-v${{ steps.ver.outputs.version }}
           path: dist/*
           if-no-files-found: error
           retention-days: 14

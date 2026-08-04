@@ -1,5 +1,7 @@
 import json
 import os
+import shutil
+import subprocess
 import sys
 
 import pytest
@@ -22,6 +24,7 @@ def temp_untrace(monkeypatch, tmp_path):
     monkeypatch.setattr(injector, "EXTENSION_CRX_PATH", root / "extension.crx")
     monkeypatch.setattr(injector, "EXTENSION_UPDATES_XML", root / "updates.xml")
     monkeypatch.setattr(injector, "SEED_PROFILE_SCRIPT", root / "seed_profile.py")
+    monkeypatch.setattr(injector, "PATCH_DRIVER_SCRIPT", root / "patch_driver.py")
     return root, ext_dir, script_path
 
 
@@ -34,9 +37,14 @@ def test_setup_creates_extension(temp_untrace):
 
     assert result == script_path
     assert (root / "seed_profile.py").is_file()
+    assert (root / "patch_driver.py").is_file()
     assert (ext_dir / "manifest.json").is_file()
     assert (ext_dir / "js" / "utils.js").is_file()
     assert (ext_dir / "js" / "navigator.webdriver.js").is_file()
+    assert (ext_dir / "js" / "media.codecs.js").is_file()
+    assert (ext_dir / "js" / "media.capabilities.js").is_file()
+    assert (ext_dir / "js" / "media.devices.js").is_file()
+    assert (ext_dir / "js" / "media.audio.js").is_file()
     assert (ext_dir / "icons" / "icon-128.png").is_file()
     manifest = json.loads((ext_dir / "manifest.json").read_text())
     assert manifest["icons"]["128"] == "icons/icon-128.png"
@@ -118,7 +126,6 @@ def test_seed_extension_into_profile(temp_untrace):
 def test_seed_profile_script_seeds_extra_load_extension_paths(temp_untrace, tmp_path):
     import base64
     import hashlib
-    import subprocess
 
     root, _, _ = temp_untrace
     injector.setup(list(DEFAULT_CHROME_SCRIPTS), CHROME_SCRIPTS)
@@ -156,6 +163,42 @@ def test_seed_profile_script_seeds_extra_load_extension_paths(temp_untrace, tmp_
     assert injector.extension_id() in prefs["extensions"]["settings"]
     assert extra_id in prefs["extensions"]["settings"]
     assert (profile / "Default" / "Extensions" / extra_id / "0.6.1").is_dir()
+
+
+@_linux_only
+def test_seed_profile_script_fails_when_extension_missing(temp_untrace):
+    root, ext_dir, _ = temp_untrace
+    injector.setup(list(DEFAULT_CHROME_SCRIPTS), CHROME_SCRIPTS)
+    shutil.rmtree(ext_dir)
+
+    profile = root / "chrome_profile"
+    script = root / "seed_profile.py"
+    result = subprocess.run(
+        [sys.executable, str(script), str(profile)],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "stealth extension not installed" in result.stderr
+
+
+@_linux_only
+def test_seed_profile_script_ok_when_injection_disabled(temp_untrace):
+    root, ext_dir, _ = temp_untrace
+    injector.setup(list(DEFAULT_CHROME_SCRIPTS), CHROME_SCRIPTS)
+    shutil.rmtree(ext_dir)
+    (root / "config.json").write_text(json.dumps({"js_injection": False}))
+
+    profile = root / "chrome_profile"
+    script = root / "seed_profile.py"
+    result = subprocess.run(
+        [sys.executable, str(script), str(profile)],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
 
 
 def test_pack_extension_zip_for_webstore(temp_untrace, tmp_path):

@@ -75,3 +75,16 @@ def test_unpatch_all_chromedrivers_uses_sudo_user_home(tmp_path, monkeypatch):
     unpatched = chromedriver.unpatch_all_chromedrivers()
     assert driver in unpatched
     assert driver.read_bytes() == original
+
+
+def test_find_chromedriver_binaries_searches_wdm_cache(tmp_path, monkeypatch):
+    home = tmp_path / "carlos"
+    cache = home / ".wdm" / "drivers" / "chromedriver" / "linux64"
+    cache.mkdir(parents=True)
+    driver = cache / "chromedriver"
+    driver.write_bytes(b"\x7fELF fake driver")
+    driver.chmod(0o755)
+
+    monkeypatch.setattr(chromedriver, "home_dirs_to_search", lambda: [home])
+
+    assert driver.resolve() in chromedriver.find_chromedriver_binaries()

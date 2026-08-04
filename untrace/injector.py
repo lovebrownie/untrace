@@ -41,6 +41,7 @@ EXTENSION_KEY_PATH: Path
 EXTENSION_CRX_PATH: Path
 EXTENSION_UPDATES_XML: Path
 SEED_PROFILE_SCRIPT: Path
+PATCH_DRIVER_SCRIPT: Path
 
 
 def user_deploy_roots() -> list[Path]:
@@ -63,6 +64,7 @@ def get_untrace_root() -> Path:
 def _sync_path_attrs() -> None:
     global UNTRACE_ROOT, CUSTOM_SCRIPT_PATH, EXTENSION_DIR, EXTENSION_KEY_PATH
     global EXTENSION_CRX_PATH, EXTENSION_UPDATES_XML, SEED_PROFILE_SCRIPT
+    global PATCH_DRIVER_SCRIPT
 
     root = get_untrace_root()
     UNTRACE_ROOT = root
@@ -72,6 +74,7 @@ def _sync_path_attrs() -> None:
     EXTENSION_CRX_PATH = root / "extension.crx"
     EXTENSION_UPDATES_XML = root / "updates.xml"
     SEED_PROFILE_SCRIPT = root / "seed_profile.py"
+    PATCH_DRIVER_SCRIPT = root / "patch_driver.py"
 
 
 def use_untrace_root(root: Path | str) -> Path:
@@ -647,6 +650,7 @@ def setup(
         path.chmod(0o755 if path.is_dir() else 0o644)
 
     _deploy_seed_script()
+    _deploy_patch_driver_script()
 
     if not IS_WINDOWS and os.geteuid() == 0:
         unregister_system_extension()
@@ -660,6 +664,8 @@ def remove() -> None:
         shutil.rmtree(EXTENSION_DIR)
     if SEED_PROFILE_SCRIPT.is_file():
         SEED_PROFILE_SCRIPT.unlink()
+    if PATCH_DRIVER_SCRIPT.is_file():
+        PATCH_DRIVER_SCRIPT.unlink()
 
 
 def user_deploy_has_payload(root: Path) -> bool:
@@ -681,6 +687,72 @@ def remove_user_deploys() -> list[Path]:
         if not root.exists():
             removed.append(root)
     return removed
+
+
+PATCH_DRIVER_SCRIPT_SOURCE = r"""#!/usr/bin/env python3
+from __future__ import annotations
+
+import json
+import re
+import shutil
+import sys
+from pathlib import Path
+
+MARKER = b"untrace chromedriver"
+CDC_INJECTION_RE = re.compile(rb"\{window\.cdc.*?;\}")
+
+STRING_PATCHES = [(b"test-type=webdriver", b" " * len(b"test-type=webdriver"))]
+if sys.platform != "win32":
+    STRING_PATCHES.append((b"enable-automation", b" " * len(b"enable-automation")))
+
+
+def patch_driver(path: str) -> bool:
+    target = Path(path)
+    try:
+        content = target.read_bytes()
+    except OSError:
+        return False
+    if MARKER in content:
+        return True
+    if not CDC_INJECTION_RE.search(content):
+        return False
+
+    config_path = Path(__file__).resolve().parent / "config.json"
+    try:
+        cfg = json.loads(config_path.read_text())
+    except Exception:
+        cfg = {}
+    if not cfg.get("chromedriver_patch", True):
+        return True
+
+    backup = Path(str(target) + ".untrace.bak")
+    if not backup.is_file():
+        shutil.copy2(target, backup)
+        backup.chmod(0o755)
+
+    replacement = b'{console.log("untrace chromedriver")}'
+    updated = CDC_INJECTION_RE.sub(
+        lambda match: replacement.ljust(len(match.group(0)), b" "),
+        content,
+        count=1,
+    )
+    for old, new in STRING_PATCHES:
+        updated = updated.replace(old, new)
+    target.write_bytes(updated)
+    target.chmod(0o755)
+    return True
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        sys.exit(2)
+    sys.exit(0 if patch_driver(sys.argv[1]) else 1)
+"""
+
+
+def _deploy_patch_driver_script() -> None:
+    PATCH_DRIVER_SCRIPT.write_text(PATCH_DRIVER_SCRIPT_SOURCE)
+    PATCH_DRIVER_SCRIPT.chmod(0o755)
 
 
 def _deploy_seed_script() -> None:
@@ -775,7 +847,7 @@ def install_unpacked(profile: Path, prefs: dict, src: Path) -> bool:
     return True
 
 
-def seed(profile_dir: str, *extra_extension_dirs: str) -> None:
+def seed(profile_dir: str, *extra_extension_dirs: str) -> bool:
     profile = Path(profile_dir)
     prefs = _load_prefs(profile)
     changed = False
@@ -788,9 +860,11 @@ def seed(profile_dir: str, *extra_extension_dirs: str) -> None:
         except Exception:
             cfg = {}
 
-    if cfg.get("js_injection", True) and (EXTENSION_DIR / "manifest.json").is_file():
-        if install_unpacked(profile, prefs, EXTENSION_DIR):
-            changed = True
+    extension_required = bool(cfg.get("js_injection", True))
+    extension_installed = False
+    if extension_required:
+        extension_installed = install_unpacked(profile, prefs, EXTENSION_DIR)
+        changed = changed or extension_installed
 
     for extra in extra_extension_dirs:
         src = Path(extra)
@@ -799,15 +873,22 @@ def seed(profile_dir: str, *extra_extension_dirs: str) -> None:
 
     if changed:
         _write_prefs(profile, prefs)
+    return extension_installed or not extension_required
 
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         sys.exit(2)
     try:
-        seed(sys.argv[1], *sys.argv[2:])
+        seeded = seed(sys.argv[1], *sys.argv[2:])
     except Exception as exc:
         print(f"[untrace] seed_profile failed: {exc}", file=sys.stderr)
+        sys.exit(1)
+    if not seeded:
+        print(
+            "[untrace] seed_profile: stealth extension not installed",
+            file=sys.stderr,
+        )
         sys.exit(1)
 """
     SEED_PROFILE_SCRIPT.write_text(script)

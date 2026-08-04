@@ -72,6 +72,9 @@ CHROME_SCRIPTS: dict[str, tuple[str, list | None]] = {
     "iframe.contentWindow": ("iframe.contentWindow.js", None),
     "iframe.webdriver": ("iframe.webdriver.js", None),
     "media.codecs": ("media.codecs.js", None),
+    "media.capabilities": ("media.capabilities.js", None),
+    "media.devices": ("media.devices.js", None),
+    "media.audio": ("media.audio.js", None),
     "navigator.languages": ("navigator.languages.js", [["en-US", "en"]]),
     "navigator.permissions": ("navigator.permissions.js", None),
     "navigator.plugins": ("navigator.plugins.js", None),
@@ -87,7 +90,6 @@ OPTIONAL_CHROME_SCRIPTS: frozenset[str] = frozenset(
     {
         "hairline.fix",
         "navigator.permissions",
-        "media.codecs",
         "navigator.plugins",
         "chrome.app",
         "chrome.runtime",
@@ -197,7 +199,7 @@ AUTOMATION_DETECT_BASH = """
 UNTRACE_AUTOMATION=0
 for arg in "$@"; do
   case "$arg" in
-    --remote-debugging-port*|--test-type=webdriver|--test-type=webbrowse|--enable-automation|--disable-automatio)
+    --remote-debugging-port*|--remote-debugging-pipe*|--test-type=webdriver|--test-type=webbrowse|--enable-automation|--disable-automatio)
       UNTRACE_AUTOMATION=1
       break
       ;;
@@ -246,7 +248,13 @@ _seed_untrace_extension() {{
   [ -n "$pdir" ] || return 0
   root="$(_resolve_untrace_root)"
   mkdir -p "$pdir"
-  "$root/seed_profile.py" "$pdir" "$@" || true
+  if "$root/seed_profile.py" "$pdir" "$@"; then
+    return 0
+  fi
+  sleep 0.2
+  if ! "$root/seed_profile.py" "$pdir" "$@"; then
+    echo "[untrace] warning: extension seed failed for $pdir" >&2
+  fi
 }}
 """
 
@@ -1218,6 +1226,7 @@ class ChromeWrapper
         {
             string arg = args[i];
             if (arg.StartsWith("--remote-debugging-port")
+                || arg.StartsWith("--remote-debugging-pipe")
                 || arg.StartsWith("--test-type=")
                 || arg == "--test-type"
                 || arg == "--enable-automation"
@@ -1551,7 +1560,7 @@ class ChromeWrapper
     }
 
     // Template once, then copy into each --user-data-dir (DevTools-safe).
-    static void EnsureWarmedProfile(string userDataDir, bool automation)
+    static void EnsureWarmedProfile(string userDataDir)
     {
         if (string.IsNullOrEmpty(userDataDir) || StealthExtensionReady(userDataDir))
             return;
@@ -1567,8 +1576,7 @@ class ChromeWrapper
             }
             catch { }
         }
-        if (!automation)
-            WarmupStealthProfile(userDataDir);
+        WarmupStealthProfile(userDataDir);
     }
 
     static string NewRandomProfileDir()
@@ -1680,7 +1688,7 @@ class ChromeWrapper
 
         string userDataDir = profileDir ?? FindUserDataDir(finalArgs);
         if (ServeStealth && !string.IsNullOrEmpty(userDataDir))
-            EnsureWarmedProfile(userDataDir, automation);
+            EnsureWarmedProfile(userDataDir);
 
         var quoted = new string[finalArgs.Count];
         for (int i = 0; i < finalArgs.Count; i++)

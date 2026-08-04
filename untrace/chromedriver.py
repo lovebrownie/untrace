@@ -66,7 +66,8 @@ def find_chromedriver_binaries() -> list[Path]:
             mode = resolved.stat().st_mode
         except OSError:
             continue
-        if not mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH):
+        # Windows does not track POSIX execute bits; any file there is a candidate.
+        if not IS_WINDOWS and not mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH):
             continue
         seen.add(resolved)
         unique.append(resolved)

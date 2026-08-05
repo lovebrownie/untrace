@@ -12,7 +12,7 @@ Three independent layers (bare `--install` enables all):
 |-------|------|-------------|
 | **Stealth extension** | `--stealth-extension` | MV3 extension — injects anti-detection scripts at `document_start` in the `MAIN` world on every frame. **Linux:** local pack/seed. **Windows:** [Chrome Web Store force-install](https://chromewebstore.google.com/detail/untrace-injector/mgnlenokophofdnmlabkgpmlnolgomgj) |
 | **Chrome launch wrapper** / **Random profiles** | `--launch-wrapper` | Replaces Chrome with a launch wrapper in front of `chrome_real` (bash on Linux, C# on Windows). Strips chromedriver junk flags, applies launcher flags, and uses a fresh random profile each launch. Seeds the extension into profiles on Linux; on Windows profiles live under `%TEMP%\chrome_random_profiles` |
-| **Chromedriver CDC patch** | `--chromedriver-cdc` | Neutralizes the CDC (`window.cdc_*`) injection in cached chromedriver binaries and blanks `test-type=webdriver`. On Linux also blanks `enable-automation` and patches selenium-manager so `webdriver.Chrome()` picks up the wrapper. On Windows leaves `enable-automation` intact (required for remote debugging) |
+| **Chromedriver CDC patch** | `--chromedriver-cdc` | Neutralizes the CDC (`window.cdc_*`) injection in cached chromedriver binaries and blanks `test-type=webdriver`. On Linux also blanks `enable-automation`, patches selenium-manager so `webdriver.Chrome()` picks up the wrapper, and auto-patches freshly downloaded drivers. On Windows leaves `enable-automation` intact (required for remote debugging) |
 
 ## Quick start
 
@@ -109,6 +109,10 @@ driver = webdriver.Chrome(options=Options())
 
 When the wrapper is active it strips chromedriver junk (`--disable-blink-features=AutomationControlled`, `--test-type=webdriver`, …) and applies launcher flags. On Linux it also strips `--enable-automation` and `--headless`. On Windows `--enable-automation` stays so Chrome stays alive under remote debugging, and `driver.quit()` tears down `chrome_real` via a Job Object.
 
+### Other frameworks
+
+Untrace is not Selenium-specific. Any framework that launches the wrapped Chrome gets the same flag stripping and extension seeding — including Playwright (`channel="chrome"` or `executable_path` pointing at the wrapped binary), Puppeteer, undetected-chromedriver, and raw CDP clients. The wrapper treats `--remote-debugging-port` and `--remote-debugging-pipe` launches as automation, and the page-side scripts scrub Playwright/Puppeteer evaluation markers (`__playwright*`, `__puppeteer_evaluation_script__`). Bundled browser binaries (e.g. Playwright's own Chromium) are not wrapped; point the framework at the system Chrome or `~/.local/share/untrace/chrome` on Linux.
+
 ## Windows differences
 
 | Topic | Behavior |
@@ -161,12 +165,20 @@ Default stealth scripts live in `untrace/js/`. Enable or disable via `DEFAULT_CH
 | `navigator.vendor.js` | Sets `navigator.vendor` |
 | `webgl.vendor.js` | Spoofs WebGL vendor/renderer |
 | `window.outerdimensions.js` | Realistic `outerWidth` / `outerHeight` |
+| `media.codecs.js` | Matches real Chrome `canPlayType` / `MediaSource.isTypeSupported` results for MP4/H.264/AAC/M4A/MPEG |
+| `media.capabilities.js` | Reports Chrome-standard `decodingInfo` support for the same proprietary codecs |
+| `media.devices.js` | Keeps `enumerateDevices()` realistic (always at least one `audiooutput`) |
+| `media.audio.js` | Aligns `AudioContext.sampleRate` with the platform default (headless reports 44100 everywhere) |
 | `cleanup.js` | Removes the `utils` global after injection |
 | `custom.js` | Your hooks (runs last) |
 
-Optional (off by default): `iframe.contentWindow`, `navigator.plugins`, `navigator.permissions`, `media.codecs`, `chrome.app`, `chrome.runtime`, `chrome.csi`, `chrome.loadTimes`, `hairline.fix`.
+Optional (off by default): `iframe.contentWindow`, `navigator.plugins`, `navigator.permissions`, `chrome.app`, `chrome.runtime`, `chrome.csi`, `chrome.loadTimes`, `hairline.fix`.
 
 > `iframe.contentWindow.js` is optional because its `document.createElement` hook can trip Akamai BMP on protected sites. Enable only if you need the srcdoc iframe fix.
+
+### Streaming platforms
+
+Video/audio sites probe media APIs beyond the classic bot checks: `enumerateDevices()` (headless builds and VMs often expose no `audiooutput` at all), codec capability surfaces (`canPlayType`, `MediaSource.isTypeSupported`, `mediaCapabilities.decodingInfo`), and DRM via Widevine/EME. The media scripts above cover the page-side signals; real Chrome already ships Widevine, so point Playwright/Puppeteer at the wrapped Chrome (`channel="chrome"` or `executable_path`) rather than a bundled Chromium. Note that fresh random profiles have no media engagement history, so players that require autoplay-with-sound may still need a click — which matches a brand-new user.
 
 ## Development
 

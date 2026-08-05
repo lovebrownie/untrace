@@ -24,13 +24,20 @@ if [ ! -f "$USER_CHROME" ]; then
 fi
 {python} -c '
 import json, sys
+import subprocess
 from pathlib import Path
 data = json.load(sys.stdin)
 result = data.get("result")
-if isinstance(result, dict) and result.get("browser_path"):
-    user = Path("~/{user_untrace}/chrome").expanduser()
-    if user.is_file():
-        result["browser_path"] = str(user)
+if isinstance(result, dict):
+    if result.get("browser_path"):
+        user = Path("~/{user_untrace}/chrome").expanduser()
+        if user.is_file():
+            result["browser_path"] = str(user)
+    driver = result.get("driver_path")
+    if driver:
+        helper = Path("~/{user_untrace}/patch_driver.py").expanduser()
+        if helper.is_file():
+            subprocess.run([sys.executable, str(helper), str(driver)], capture_output=True)
 print(json.dumps(data))
 ' <<< "$OUT"
 """

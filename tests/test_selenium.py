@@ -9,6 +9,7 @@ def test_patch_selenium_manager_writes_wrapper(tmp_path):
     assert selenium.patch_selenium_manager(binary) is True
     content = binary.read_text(encoding="utf-8")
     assert selenium.PATCH_MARKER in content
+    assert "patch_driver.py" in content
     assert selenium.backup_path(binary).is_file()
     assert selenium.patch_selenium_manager(binary) is True
 

@@ -125,6 +125,8 @@ def test_chrome_wrapper_script():
     assert "_untrace_add_disable_features" in random_on
     assert "DisableLoadExtensionCommandLineSwitch" in random_on
     assert "--disable-features=*)" in random_on
+    assert "--remote-debugging-pipe*" in random_on
+    assert 'echo "[untrace] warning: extension seed failed' in random_on
 
 
 def test_windows_wrapper_strips_extension_allowlist_flags(monkeypatch, tmp_path):
@@ -146,6 +148,8 @@ def test_windows_wrapper_strips_extension_allowlist_flags(monkeypatch, tmp_path)
     assert "DisableLoadExtensionCommandLineSwitch" in src
     assert "static readonly List<string> DisableFeatures" in src
     assert "__PROTECT_EXTENSIONS__" not in src
+    assert "if (!automation)" not in src
+    assert "WarmupStealthProfile(userDataDir);" in src
 
 
 def test_write_launch_flags_persists_flags(tmp_path):

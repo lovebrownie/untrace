@@ -27,10 +27,13 @@ BINARY_STRING_PATCHES: tuple[tuple[bytes, bytes], ...] = (
 )
 
 
-def _selenium_cache_roots() -> list[Path]:
-    return [
-        home / ".cache" / "selenium" / "chromedriver" for home in home_dirs_to_search()
-    ]
+def _driver_search_roots() -> list[Path]:
+    roots: list[Path] = []
+    for home in home_dirs_to_search():
+        roots.append(home / ".cache" / "selenium" / "chromedriver")
+        # webdriver-manager (Python) default cache.
+        roots.append(home / ".wdm")
+    return roots
 
 
 def backup_path(binary: Path) -> Path:
@@ -39,7 +42,7 @@ def backup_path(binary: Path) -> Path:
 
 def find_chromedriver_binaries() -> list[Path]:
     names = ("chromedriver.exe", "chromedriver") if IS_WINDOWS else ("chromedriver",)
-    search_roots: list[Path] = list(_selenium_cache_roots())
+    search_roots: list[Path] = _driver_search_roots()
     if not IS_WINDOWS:
         search_roots.extend((Path("/usr/local/bin"), Path("/usr/bin")))
 
@@ -63,7 +66,8 @@ def find_chromedriver_binaries() -> list[Path]:
             mode = resolved.stat().st_mode
         except OSError:
             continue
-        if not mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH):
+        # Windows does not track POSIX execute bits; any file there is a candidate.
+        if not IS_WINDOWS and not mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH):
             continue
         seen.add(resolved)
         unique.append(resolved)

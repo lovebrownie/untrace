@@ -72,6 +72,9 @@ CHROME_SCRIPTS: dict[str, tuple[str, list | None]] = {
     "iframe.contentWindow": ("iframe.contentWindow.js", None),
     "iframe.webdriver": ("iframe.webdriver.js", None),
     "media.codecs": ("media.codecs.js", None),
+    "media.capabilities": ("media.capabilities.js", None),
+    "media.devices": ("media.devices.js", None),
+    "media.audio": ("media.audio.js", None),
     "navigator.languages": ("navigator.languages.js", [["en-US", "en"]]),
     "navigator.permissions": ("navigator.permissions.js", None),
     "navigator.plugins": ("navigator.plugins.js", None),
@@ -87,7 +90,6 @@ OPTIONAL_CHROME_SCRIPTS: frozenset[str] = frozenset(
     {
         "hairline.fix",
         "navigator.permissions",
-        "media.codecs",
         "navigator.plugins",
         "chrome.app",
         "chrome.runtime",
@@ -197,7 +199,7 @@ AUTOMATION_DETECT_BASH = """
 UNTRACE_AUTOMATION=0
 for arg in "$@"; do
   case "$arg" in
-    --remote-debugging-port*|--test-type=webdriver|--test-type=webbrowse|--enable-automation|--disable-automatio)
+    --remote-debugging-port*|--remote-debugging-pipe*|--test-type=webdriver|--test-type=webbrowse|--enable-automation|--disable-automatio)
       UNTRACE_AUTOMATION=1
       break
       ;;
@@ -246,7 +248,13 @@ _seed_untrace_extension() {{
   [ -n "$pdir" ] || return 0
   root="$(_resolve_untrace_root)"
   mkdir -p "$pdir"
-  "$root/seed_profile.py" "$pdir" "$@" || true
+  if "$root/seed_profile.py" "$pdir" "$@"; then
+    return 0
+  fi
+  sleep 0.2
+  if ! "$root/seed_profile.py" "$pdir" "$@"; then
+    echo "[untrace] warning: extension seed failed for $pdir" >&2
+  fi
 }}
 """
 
@@ -1058,12 +1066,167 @@ class ChromeWrapper
         }
     }
 
+    // Terminate processes through the Win32 API instead of spawning
+    // taskkill.exe, so no console window can ever flash from this
+    // (windowed) wrapper.
+    static class WinProcessKill
+    {
+        [DllImport("kernel32.dll")]
+        static extern IntPtr CreateToolhelp32Snapshot(
+            uint dwFlags, uint th32ProcessID);
+
+        [DllImport("kernel32.dll")]
+        static extern bool Process32FirstW(
+            IntPtr hSnapshot, ref PROCESSENTRY32W lppe);
+
+        [DllImport("kernel32.dll")]
+        static extern bool Process32NextW(
+            IntPtr hSnapshot, ref PROCESSENTRY32W lppe);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern IntPtr OpenProcess(
+            uint dwDesiredAccess, bool bInheritHandle, uint dwProcessId);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern bool TerminateProcess(
+            IntPtr hProcess, uint uExitCode);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern uint WaitForSingleObject(
+            IntPtr hHandle, uint dwMilliseconds);
+
+        [DllImport("kernel32.dll")]
+        static extern bool CloseHandle(IntPtr hObject);
+
+        const uint TH32CS_SNAPPROCESS = 0x00000002;
+        const uint PROCESS_TERMINATE = 0x00000001;
+        const uint SYNCHRONIZE = 0x00100000;
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct PROCESSENTRY32W
+        {
+            public uint dwSize;
+            public uint cntUsage;
+            public uint th32ProcessID;
+            public IntPtr th32DefaultHeapID;
+            public uint th32ModuleID;
+            public uint cntThreads;
+            public uint th32ParentProcessID;
+            public int pcPriClassBase;
+            public uint dwFlags;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+            public string szExeFile;
+        }
+
+        public static void KillTree(uint rootPid)
+        {
+            var children = new Dictionary<uint, List<uint>>();
+            IntPtr snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+            if (snapshot != IntPtr.Zero && snapshot != (IntPtr)(-1))
+            {
+                try
+                {
+                    var entry = new PROCESSENTRY32W();
+                    entry.dwSize = (uint)Marshal.SizeOf(typeof(PROCESSENTRY32W));
+                    bool more = Process32FirstW(snapshot, ref entry);
+                    while (more)
+                    {
+                        List<uint> list;
+                        if (!children.TryGetValue(entry.th32ParentProcessID, out list))
+                        {
+                            list = new List<uint>();
+                            children[entry.th32ParentProcessID] = list;
+                        }
+                        list.Add(entry.th32ProcessID);
+                        more = Process32NextW(snapshot, ref entry);
+                    }
+                }
+                finally
+                {
+                    CloseHandle(snapshot);
+                }
+            }
+
+            var order = new List<uint>();
+            var stack = new Stack<uint>();
+            stack.Push(rootPid);
+            while (stack.Count > 0)
+            {
+                uint pid = stack.Pop();
+                order.Add(pid);
+                List<uint> kids;
+                if (children.TryGetValue(pid, out kids))
+                {
+                    for (int i = 0; i < kids.Count; i++)
+                        stack.Push(kids[i]);
+                }
+            }
+            order.Reverse(); // children first, parents last
+
+            IntPtr rootHandle = IntPtr.Zero;
+            for (int i = 0; i < order.Count; i++)
+            {
+                uint pid = order[i];
+                IntPtr handle = OpenProcess(
+                    PROCESS_TERMINATE | SYNCHRONIZE, false, pid);
+                if (handle == IntPtr.Zero)
+                    continue;
+                try
+                {
+                    TerminateProcess(handle, 1);
+                }
+                catch { }
+                if (pid == rootPid)
+                    rootHandle = handle;
+                else
+                    CloseHandle(handle);
+            }
+
+            if (rootHandle != IntPtr.Zero)
+            {
+                try { WaitForSingleObject(rootHandle, 10000); } catch { }
+                CloseHandle(rootHandle);
+            }
+        }
+
+        public static void KillByName(string imageName)
+        {
+            string needle = imageName.ToLowerInvariant();
+            var matches = new List<uint>();
+            IntPtr snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+            if (snapshot == IntPtr.Zero || snapshot == (IntPtr)(-1))
+                return;
+            try
+            {
+                var entry = new PROCESSENTRY32W();
+                entry.dwSize = (uint)Marshal.SizeOf(typeof(PROCESSENTRY32W));
+                bool more = Process32FirstW(snapshot, ref entry);
+                while (more)
+                {
+                    if (entry.szExeFile != null
+                        && entry.szExeFile.ToLowerInvariant() == needle)
+                    {
+                        matches.Add(entry.th32ProcessID);
+                    }
+                    more = Process32NextW(snapshot, ref entry);
+                }
+            }
+            finally
+            {
+                CloseHandle(snapshot);
+            }
+            for (int i = 0; i < matches.Count; i++)
+                KillTree(matches[i]);
+        }
+    }
+
     static bool IsAutomation(string[] args)
     {
         for (int i = 0; i < args.Length; i++)
         {
             string arg = args[i];
             if (arg.StartsWith("--remote-debugging-port")
+                || arg.StartsWith("--remote-debugging-pipe")
                 || arg.StartsWith("--test-type=")
                 || arg == "--test-type"
                 || arg == "--enable-automation"
@@ -1264,16 +1427,7 @@ class ChromeWrapper
             return;
         try
         {
-            var kill = new ProcessStartInfo
-            {
-                FileName = "taskkill",
-                Arguments = "/F /T /PID " + proc.Id,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            Process killer = Process.Start(kill);
-            if (killer != null)
-                killer.WaitForExit(10000);
+            WinProcessKill.KillTree((uint)proc.Id);
         }
         catch { }
         try
@@ -1369,26 +1523,8 @@ class ChromeWrapper
             }
             try
             {
-                var killReal = new ProcessStartInfo
-                {
-                    FileName = "taskkill",
-                    Arguments = "/F /IM chrome_real.exe /T",
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                };
-                Process kr = Process.Start(killReal);
-                if (kr != null)
-                    kr.WaitForExit(15000);
-                var killChrome = new ProcessStartInfo
-                {
-                    FileName = "taskkill",
-                    Arguments = "/F /IM chrome.exe /T",
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                };
-                Process kc = Process.Start(killChrome);
-                if (kc != null)
-                    kc.WaitForExit(15000);
+                WinProcessKill.KillByName("chrome_real.exe");
+                WinProcessKill.KillByName("chrome.exe");
             }
             catch { }
         }
@@ -1424,7 +1560,7 @@ class ChromeWrapper
     }
 
     // Template once, then copy into each --user-data-dir (DevTools-safe).
-    static void EnsureWarmedProfile(string userDataDir, bool automation)
+    static void EnsureWarmedProfile(string userDataDir)
     {
         if (string.IsNullOrEmpty(userDataDir) || StealthExtensionReady(userDataDir))
             return;
@@ -1440,8 +1576,7 @@ class ChromeWrapper
             }
             catch { }
         }
-        if (!automation)
-            WarmupStealthProfile(userDataDir);
+        WarmupStealthProfile(userDataDir);
     }
 
     static string NewRandomProfileDir()
@@ -1553,7 +1688,7 @@ class ChromeWrapper
 
         string userDataDir = profileDir ?? FindUserDataDir(finalArgs);
         if (ServeStealth && !string.IsNullOrEmpty(userDataDir))
-            EnsureWarmedProfile(userDataDir, automation);
+            EnsureWarmedProfile(userDataDir);
 
         var quoted = new string[finalArgs.Count];
         for (int i = 0; i < finalArgs.Count; i++)
@@ -1807,16 +1942,8 @@ def windows_profile_template_ready() -> bool:
         return False
 
 
-def _kill_windows_chrome_processes() -> None:
-    for image in ("chrome_real.exe", "chrome.exe"):
-        subprocess.run(
-            ["taskkill", "/F", "/IM", image, "/T"],
-            capture_output=True,
-            check=False,
-        )
-
-
-def _windows_process_tree_pids(root_pid: int) -> set[int]:
+def _windows_process_snapshot() -> list[tuple[int, int, str]]:
+    """Return (pid, parent_pid, exe_name) for every process in the snapshot."""
     import ctypes
     from ctypes import wintypes
 
@@ -1839,29 +1966,97 @@ def _windows_process_tree_pids(root_pid: int) -> set[int]:
     kernel32 = ctypes.windll.kernel32
     snapshot = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
     if snapshot in (-1, 0):
-        return {root_pid}
+        return []
 
-    pids = {root_pid}
-    children: dict[int, list[int]] = {}
+    processes: list[tuple[int, int, str]] = []
     try:
         entry = PROCESSENTRY32W()
         entry.dwSize = ctypes.sizeof(PROCESSENTRY32W)
         more = kernel32.Process32FirstW(snapshot, ctypes.byref(entry))
         while more:
-            children.setdefault(entry.th32ParentProcessID, []).append(
-                entry.th32ProcessID
-            )
+            exe_name = ctypes.wstring_at(ctypes.addressof(entry.szExeFile))
+            processes.append((entry.th32ProcessID, entry.th32ParentProcessID, exe_name))
             more = kernel32.Process32NextW(snapshot, ctypes.byref(entry))
-        stack = [root_pid]
-        while stack:
-            current = stack.pop()
-            for child in children.get(current, []):
-                if child not in pids:
-                    pids.add(child)
-                    stack.append(child)
     finally:
         kernel32.CloseHandle(snapshot)
+    return processes
+
+
+def _windows_process_tree_pids(root_pid: int) -> set[int]:
+    children: dict[int, list[int]] = {}
+    for pid, parent_pid, _exe_name in _windows_process_snapshot():
+        children.setdefault(parent_pid, []).append(pid)
+
+    pids = {root_pid}
+    stack = [root_pid]
+    while stack:
+        current = stack.pop()
+        for child in children.get(current, []):
+            if child not in pids:
+                pids.add(child)
+                stack.append(child)
     return pids
+
+
+def _terminate_windows_process_tree(root_pid: int, timeout_ms: int = 10000) -> None:
+    """Terminate a process and its descendants via the Win32 API."""
+    import ctypes
+    from ctypes import wintypes
+
+    PROCESS_TERMINATE = 0x0001
+    SYNCHRONIZE = 0x00100000
+
+    kernel32 = ctypes.windll.kernel32
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.OpenProcess.argtypes = (
+        wintypes.DWORD,
+        wintypes.BOOL,
+        wintypes.DWORD,
+    )
+    kernel32.TerminateProcess.argtypes = (wintypes.HANDLE, wintypes.UINT)
+    kernel32.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+
+    children: dict[int, list[int]] = {}
+    for pid, parent_pid, _exe_name in _windows_process_snapshot():
+        children.setdefault(parent_pid, []).append(pid)
+
+    order: list[int] = []
+    stack = [root_pid]
+    while stack:
+        pid = stack.pop()
+        order.append(pid)
+        stack.extend(children.get(pid, []))
+    order.reverse()  # children first, so parents die last
+
+    root_handle = None
+    for pid in order:
+        handle = kernel32.OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, False, pid)
+        if not handle:
+            continue
+        try:
+            kernel32.TerminateProcess(handle, 1)
+        finally:
+            if pid == root_pid:
+                root_handle = handle
+            else:
+                kernel32.CloseHandle(handle)
+    if root_handle is not None:
+        try:
+            kernel32.WaitForSingleObject(root_handle, timeout_ms)
+        finally:
+            kernel32.CloseHandle(root_handle)
+
+
+def _kill_windows_chrome_processes() -> None:
+    images = ("chrome_real.exe", "chrome.exe")
+    targets = [
+        pid
+        for pid, _parent_pid, exe_name in _windows_process_snapshot()
+        if exe_name.lower() in images
+    ]
+    for pid in targets:
+        _terminate_windows_process_tree(pid)
 
 
 def _minimize_windows_for_pids(pids: set[int]) -> None:
@@ -1925,11 +2120,7 @@ def warm_windows_profile_template(real_exe: str) -> bool:
         else:
             time.sleep(5)
     finally:
-        subprocess.run(
-            ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
-            capture_output=True,
-            check=False,
-        )
+        _terminate_windows_process_tree(proc.pid)
         try:
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:

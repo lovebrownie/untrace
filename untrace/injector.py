@@ -496,7 +496,7 @@ def build_manifest(
 ) -> dict:
     manifest: dict = {
         "manifest_version": 3,
-        "name": "Untrace Injector",
+        "name": "untrace",
         "version": version,
         "host_permissions": ["<all_urls>"],
         "content_scripts": [

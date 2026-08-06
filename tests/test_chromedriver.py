@@ -342,7 +342,7 @@ def test_untrace_extension(chrome_driver):
         item for item in items if "untrace" in (item.get("name") or "").lower()
     ]
     assert untrace_items, (
-        f"Untrace Injector not listed on chrome://extensions/: {items}"
+        f"untrace extension not listed on chrome://extensions/: {items}"
     )
 
     item_text = (untrace_items[0].get("body") or "").lower()

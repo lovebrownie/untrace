@@ -201,7 +201,7 @@ uv run task test-browser  # needs a prior full --install
 |----------|----------|
 | Windows | `dist/Untrace-*-Setup.exe` + `Portable.exe` + `Windows.zip` |
 | Linux | `dist/untrace_*_amd64.deb` |
-| Both | `dist/untrace-injector-*.zip` |
+| Both | `dist/extension-*.zip` |
 
 Windows Setup builds need [Inno Setup 6](https://jrsoftware.org/isinfo.php) (`ISCC.exe`). Install with `winget install JRSoftware.InnoSetup` or `choco install innosetup`. Linux `.deb` builds need `dpkg-deb`.
 

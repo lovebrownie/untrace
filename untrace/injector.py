@@ -14,6 +14,7 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
+from undetected.inject import JS_DIR as JS_SOURCE_DIR
 from untrace.paths import (
     IS_WINDOWS,
     LINUX_USER_UNTRACE_REL,
@@ -95,10 +96,10 @@ def clear_untrace_root_override() -> None:
 
 
 _sync_path_attrs()
-JS_SOURCE_DIR = Path(__file__).parent / "js"
 
 ASSETS_DIR = assets_dir()
 UTILS_FILENAME = "utils.js"
+CUSTOM_JS_SOURCE_DIR = Path(__file__).parent / "js"
 EXTENSION_ICON_SIZES = ("16", "48", "128")
 
 LINUX_CHROME_POLICY_DIR = Path("/etc/opt/chrome/policies/managed")
@@ -542,7 +543,7 @@ def pack_extension_zip(
         js_dir = root / "js"
         script_files = _deploy_stealth_scripts(js_dir, enabled_scripts, script_catalog)
         custom_name = "custom.js"
-        custom_src = JS_SOURCE_DIR / custom_name
+        custom_src = CUSTOM_JS_SOURCE_DIR / custom_name
         if custom_src.is_file():
             shutil.copy2(custom_src, js_dir / custom_name)
         else:
@@ -689,7 +690,15 @@ def remove_user_deploys() -> list[Path]:
     return removed
 
 
-PATCH_DRIVER_SCRIPT_SOURCE = r"""#!/usr/bin/env python3
+def _patch_driver_script_source() -> str:
+    from undetected.cdc import (
+        CDC_INJECTION_RE,
+        ENABLE_AUTOMATION,
+        TEST_TYPE_WEBDRIVER,
+    )
+
+    marker = "untrace chromedriver"
+    return f'''#!/usr/bin/env python3
 from __future__ import annotations
 
 import json
@@ -698,12 +707,12 @@ import shutil
 import sys
 from pathlib import Path
 
-MARKER = b"untrace chromedriver"
-CDC_INJECTION_RE = re.compile(rb"\{window\.cdc.*?;\}")
+MARKER = b"{marker}"
+CDC_INJECTION_RE = re.compile({CDC_INJECTION_RE.pattern!r})
 
-STRING_PATCHES = [(b"test-type=webdriver", b" " * len(b"test-type=webdriver"))]
+STRING_PATCHES = [({TEST_TYPE_WEBDRIVER!r}, b" " * {len(TEST_TYPE_WEBDRIVER)})]
 if sys.platform != "win32":
-    STRING_PATCHES.append((b"enable-automation", b" " * len(b"enable-automation")))
+    STRING_PATCHES.append(({ENABLE_AUTOMATION!r}, b" " * {len(ENABLE_AUTOMATION)}))
 
 
 def patch_driver(path: str) -> bool:
@@ -721,7 +730,7 @@ def patch_driver(path: str) -> bool:
     try:
         cfg = json.loads(config_path.read_text())
     except Exception:
-        cfg = {}
+        cfg = {{}}
     if not cfg.get("chromedriver_patch", True):
         return True
 
@@ -730,7 +739,7 @@ def patch_driver(path: str) -> bool:
         shutil.copy2(target, backup)
         backup.chmod(0o755)
 
-    replacement = b'{console.log("untrace chromedriver")}'
+    replacement = b'{{console.log("{marker}")}}'
     updated = CDC_INJECTION_RE.sub(
         lambda match: replacement.ljust(len(match.group(0)), b" "),
         content,
@@ -747,7 +756,10 @@ if __name__ == "__main__":
     if len(sys.argv) < 2:
         sys.exit(2)
     sys.exit(0 if patch_driver(sys.argv[1]) else 1)
-"""
+'''
+
+
+PATCH_DRIVER_SCRIPT_SOURCE = _patch_driver_script_source()
 
 
 def _deploy_patch_driver_script() -> None:

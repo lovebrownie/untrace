@@ -202,7 +202,7 @@ def test_seed_profile_script_ok_when_injection_disabled(temp_untrace):
 
 
 def test_pack_extension_zip_for_webstore(temp_untrace, tmp_path):
-    out = tmp_path / "untrace-injector.zip"
+    out = tmp_path / "extension.zip"
     path = injector.pack_extension_zip(
         out,
         list(DEFAULT_CHROME_SCRIPTS),

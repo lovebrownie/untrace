@@ -1,6 +1,6 @@
 [project]
 name = "untrace"
-version = "2.0.1"
+version = "2.0.2"
 description = "With Untrace, you don't need to worry about configs to make your bot undetectable"
 readme = "README.md"
 requires-python = ">=3.14,<4.0"
@@ -9,7 +9,9 @@ authors = [
     { name = "lovebrownie", email = "91576261+lovebrownie@users.noreply.github.com" },
 ]
 keywords = ["chrome", "selenium", "stealth", "automation"]
-dependencies = []
+dependencies = [
+    "undetected",
+]
 
 [project.scripts]
 untrace = "untrace.__main__:main"
@@ -22,6 +24,9 @@ dev = [
     "pyinstaller (>=6.21.0,<7.0.0) ; python_version >= \"3.14\" and python_version < \"3.16\"",
     "taskipy>=1.14.1",
 ]
+
+[tool.uv.sources]
+undetected = { git = "https://github.com/lovebrownie/undetected" }
 
 [build-system]
 requires = ["hatchling"]
@@ -42,7 +47,7 @@ ignore = ["E501"]
 "scripts/*" = ["E402"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["untrace"]
+known-first-party = ["untrace", "undetected"]
 
 [tool.taskipy.tasks]
 lint = "ruff format untrace/ tests/ scripts/ && ruff check --fix untrace/ tests/ scripts/"

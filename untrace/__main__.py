@@ -2402,7 +2402,7 @@ def main():
     group.add_argument(
         "--pack-extension",
         action="store_true",
-        help="pack Chrome Web Store zip -> dist/untrace-injector-vX.Y.Z.zip",
+        help="pack Chrome Web Store zip -> dist/extension-vX.Y.Z.zip",
     )
     group.add_argument(
         "--build",
@@ -2438,7 +2438,7 @@ def main():
     pack_opts.add_argument(
         "--output",
         metavar="PATH",
-        help="zip output path (default: dist/untrace-injector-vX.Y.Z.zip)",
+        help="zip output path (default: dist/extension-vX.Y.Z.zip)",
     )
     pack_opts.add_argument(
         "--version",

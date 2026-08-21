@@ -86,7 +86,7 @@ def gui_artifact_name(version: str | None = None) -> str:
 
 
 def extension_zip_name(version: str | None = None) -> str:
-    return f"untrace-injector-{version_tag(version)}.zip"
+    return f"extension-{version_tag(version)}.zip"
 
 
 def windows_zip_name(version: str | None = None) -> str:

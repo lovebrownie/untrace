@@ -43,7 +43,7 @@ def _fetch_status() -> dict:
     return gui_status()
 
 
-def _run_action(action: str) -> int:
+def _run_action(action: str) -> tuple[int, str]:
     from untrace.__main__ import install, uninstall
 
     applog.write(f"gui: starting {action}")
@@ -59,19 +59,25 @@ def _run_action(action: str) -> int:
         else:
             raise ValueError(action)
     except SystemExit as exc:
-        code = exc.code
-        if code is None:
-            code = 0
-        elif not isinstance(code, int):
-            applog.write(f"gui: {action} exit: {code}")
-            code = 1
+        raw = exc.code
+        if raw is None:
+            applog.write(f"gui: {action} finished code=0")
+            return 0, ""
+        if isinstance(raw, str):
+            msg = raw.strip()
+            applog.write(f"gui: {action} exit: {msg}")
+            applog.write(f"gui: {action} finished code=1")
+            return 1, msg or f"{action} failed."
+        code = raw if isinstance(raw, int) else 1
         applog.write(f"gui: {action} finished code={code}")
-        return code
+        if code == 0:
+            return 0, ""
+        return code, f"{action} exited with code {code}."
     except Exception as exc:
         applog.write(f"gui: {action} failed: {exc!r}")
         raise
     applog.write(f"gui: {action} finished code=0")
-    return 0
+    return 0, ""
 
 
 def _bind_tree(widget: tk.Misc, sequence: str, handler) -> None:
@@ -1401,7 +1407,7 @@ class UntraceGui(tk.Tk):
             code = 1
             err = ""
             try:
-                code = _run_action(action)
+                code, err = _run_action(action)
             except Exception as exc:
                 err = str(exc)
             self.after(0, lambda: self._done(action, label, code, err))

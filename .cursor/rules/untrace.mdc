@@ -1,0 +1,48 @@
+---
+description: Untrace project rules — install, wrapper, extension, code quality
+globs: untrace/**
+alwaysApply: true
+---
+
+# Untrace
+
+One root install (`sudo python -m untrace --install --stealth-extension --launch-wrapper --chromedriver-cdc`) wires the Chrome launch wrapper, stealth extension, and chromedriver CDC patch. Re-run to update. Fix the wrapper, extension, and chromedriver, not the caller.
+
+## Toolchain
+
+- Use **uv** only (`uv sync --group dev`, `uv run …`). Do not reintroduce Poetry. Task runners: `uv run task <name>` (taskipy in the dev group).
+- Lint: `uv run task lint` / `uv run task lint-check`
+- Unit tests: `uv run task test`
+- Browser tests: `uv run task test-browser` (requires a prior full install)
+
+## Install / uninstall
+
+- Feature flags are independent: `--stealth-extension`, `--launch-wrapper` (Chrome launch wrapper + random profiles), `--chromedriver-cdc`. Bare `--install` enables all.
+- **`sudo --uninstall` must remove everything**: system Chrome wrapper (`chrome_real` restore), `/etc/untrace`, **and** user tree at `~/.local/share/untrace` for `SUDO_USER` (not just `/root`). Unpatch chromedrivers. Never leave user tree behind with a “not removed” note.
+- Commands under `sudo` / `pkexec` must resolve the real user’s home via `linux_invoking_pw()` (`SUDO_USER` / `PKEXEC_UID`) and `home_dirs_to_search()` — not `Path.home()` as root alone. Chromedriver/selenium caches live under the invoker’s `~/.cache`.
+- Install/uninstall entrypoints elevate via `ensure_privileges()` (pkexec/sudo / UAC). Do not leave sticky `use_untrace_root()` overrides after install/uninstall.
+
+## Windows
+
+- **Stealth** uses Chrome Web Store force-install (`ExtensionInstallForcelist` + External Extensions `update_url`), not the Linux local pack/seed path. Warm `%PROGRAMDATA%\Untrace\chrome_profile_template` once (Chrome writes `Secure Preferences` `location: 7`), then copy into each `--user-data-dir`. Preference seeding cannot fake Secure Preferences. Non-enterprise Chrome blocks local/`http://` force-install hosts. Do **not** use localhost update XML, `file://` CRX, or `--load-extension`. Do not revive deleted Linux policy/CRX or Windows local-update/seed writers without an explicit product decision.
+- **Never strip or blank `--enable-automation`** (wrapper or chromedriver). Chrome exits under `--remote-debugging-port` without it. Chromedriver patch: CDC + blank `test-type=webdriver` only. SAC/WDAC may block the unsigned PE (`WinError 4551`), warn in README/CLI. Selenium-manager remains Linux-only.
+- **C# wrapper:** detect automation, strip chromedriver junk (except `--enable-automation`), apply launcher flags, `WaitForExit`, Job Object `KILL_ON_JOB_CLOSE`. Manual and Selenium use `%TEMP%\chrome_random_profiles\profile_*`; Selenium `scoped_dir` is a junction into that tree.
+- Guard Unix-only APIs (`pwd`, `geteuid`, Unix paths). Deploy roots: `%LOCALAPPDATA%\Untrace` / `%PROGRAMDATA%\Untrace`.
+
+## No workarounds
+
+- Do **not** split behavior beyond documented platform constraints (e.g. stealth only for Selenium, flags-only for manual, separate code paths “because manual is different”).
+- Do **not** punt with excuses (“Akamai is intermittent”, “can’t fix without test options”) when a test fails. Keep fixing untrace until it passes.
+- Do **not** add test-side Chrome flags/options, or one-off CLI band-aids, instead of fixing install/wrapper/extension.
+
+## Code quality
+
+- **No unnecessary comments.** Comment only when logic is non-obvious or a constraint must be preserved.
+- **No unnecessary tests.** Every test must protect real behavior the user cares about.
+- **No dead imports or symbols.** Before finishing a change, remove unused imports, variables, and helpers from every file you touched.
+- Shared path/home/chown/assets helpers live in `untrace/paths.py`. Do not re-duplicate them across modules. Prefer `IS_WINDOWS` from there over scattered `sys.platform` checks.
+- Prefer **pathlib** (`Path`) over `os.path` / bare `open` / `os.chmod` / `os.makedirs`. Ruff enforces `UP` + `PTH`.
+
+## Prose
+
+- Do **not** use em dashes (`—`). Use commas, periods, colons, or parentheses instead.

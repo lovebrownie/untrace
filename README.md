@@ -1,6 +1,6 @@
 # Untrace
 
-<p align="center">
+<p>
   <img src="assets/icon.svg" alt="untrace" width="128" height="128">
 </p>
 

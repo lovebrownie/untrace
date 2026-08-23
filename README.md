@@ -12,13 +12,13 @@ You don't need to keep asking whether your setup is stealthy enough. Untrace wir
 
 **Untrace GUI**
 
-<p align="center">
+<p>
   <img src="assets/app-installed.png" alt="untrace status, all modules online" width="640">
 </p>
 
 **Fresh Chrome profile**
 
-<p align="center">
+<p>
   <img src="assets/chrome-profile.png" alt="Chrome launched with a random profile" width="560">
 </p>
 

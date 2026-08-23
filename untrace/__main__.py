@@ -2260,9 +2260,7 @@ def install_windows(
             chrome.unlink()
             real_exe.rename(chrome)
         except PermissionError:
-            sys.exit(
-                "Permission denied. Run as Administrator and close Chrome first."
-            )
+            sys.exit("Permission denied. Run as Administrator and close Chrome first.")
 
     _apply_chromedriver_patch(cfg)
 
@@ -2296,9 +2294,7 @@ def uninstall_windows():
             applog.write(f"uninstall: restored {chrome} from {real_exe}")
         except PermissionError as exc:
             applog.write(f"uninstall: permission denied restoring chrome: {exc!r}")
-            sys.exit(
-                "Permission denied. Run as Administrator and close Chrome first."
-            )
+            sys.exit("Permission denied. Run as Administrator and close Chrome first.")
 
     injector.remove()
     template = windows_profile_template_dir()

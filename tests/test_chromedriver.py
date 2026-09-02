@@ -2,6 +2,8 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
+from untrace import injector
+
 PAGE_TIMEOUT = 30
 
 BLOCKED_MARKERS = (
@@ -321,7 +323,7 @@ def test_untrace_extension(chrome_driver):
     _wait(chrome_driver).until(
         lambda d: any(
             "untrace" in (item.get("name") or "").lower()
-            or "mgnlenokophofdnmlabkgpmlnolgomgj" in (item.get("id") or "")
+            or injector.WEBSTORE_EXTENSION_ID in (item.get("id") or "")
             for item in (_extensions_page(d).get("items") or [])
         )
     )

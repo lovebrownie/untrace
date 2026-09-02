@@ -112,7 +112,7 @@ LINUX_CHROME_EXTERNAL_DIRS: list[Path] = [
 
 LOCATION_UNPACKED = 4
 
-WEBSTORE_EXTENSION_ID = "mgnlenokophofdnmlabkgpmlnolgomgj"
+WEBSTORE_EXTENSION_ID = "gkbambinkmelhnjlicphgbodfafhcbdi"
 WEBSTORE_UPDATE_URL = "https://clients2.google.com/service/update2/crx"
 # Legacy local force-install host — cleared on register/unregister.
 _WINDOWS_LEGACY_LOCAL_SOURCE = "http://127.0.0.1:19264"

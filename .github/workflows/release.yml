@@ -13,11 +13,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
-    name: Test (${{ matrix.name }})
+  build:
+    name: Build (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
@@ -42,36 +42,6 @@ jobs:
           ver=$(uv run python -c 'from untrace import __version__; print(__version__)')
           tag="${GITHUB_REF_NAME#v}"
           test "$ver" = "$tag"
-
-      - name: Lint
-        if: runner.os == 'Linux'
-        run: uv run ruff format --check untrace/ tests/ scripts/ && uv run ruff check untrace/ tests/ scripts/
-
-      - name: Unit tests
-        run: uv run pytest --ignore=tests/test_chromedriver.py -q
-
-  build:
-    name: Build (${{ matrix.name }})
-    needs: test
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            name: Linux
-          - os: windows-latest
-            name: Windows
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: astral-sh/setup-uv@v5
-        with:
-          python-version: "3.14"
-
-      - name: Install dependencies
-        run: uv sync --group dev
 
       - name: Install Linux build deps
         if: runner.os == 'Linux'

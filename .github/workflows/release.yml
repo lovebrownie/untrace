@@ -75,7 +75,8 @@ jobs:
             echo "New version v${ver}; proceeding with release."
           else
             echo "release=false" >> "$GITHUB_OUTPUT"
-            echo "No Bump to version ${ver} commit in this push; skipping release."
+            echo "No Bump to version ${ver} commit in this push; cancelling release workflow."
+            exit 1
           fi
 
   build:

@@ -43,13 +43,13 @@ sed -i -E "s/^version[[:space:]]*=.*$/version = \"$NEW_VERSION\"/" "$PYPROJECT"
 echo "✅ Version bumped: $VERSION → $NEW_VERSION"
 
 # Ask for confirmation
-printf "Create git commit \"Bump to version \\\"%s\\\"\"? [y/N]: " "$NEW_VERSION"
+printf "Create git commit \"Bump version to \\\"%s\\\"\"? [y/N]: " "$NEW_VERSION"
 read answer
 
 case "$answer" in
   y|Y|yes|YES)
     git add "$PYPROJECT"
-    git commit -m "Bump to version \"$NEW_VERSION\""
+    git commit -m "Bump version to \"$NEW_VERSION\""
     echo "✅ Git commit created"
     ;;
   *)

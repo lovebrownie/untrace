@@ -37,12 +37,45 @@ jobs:
         run: |
           ver=$(uv run python -c 'from untrace import __version__; print(__version__)')
           echo "version=${ver}" >> "$GITHUB_OUTPUT"
+
           if git ls-remote --exit-code --tags origin "refs/tags/v${ver}" >/dev/null 2>&1; then
             echo "release=false" >> "$GITHUB_OUTPUT"
             echo "Tag v${ver} already exists; skipping release."
+            exit 0
+          fi
+
+          before="${{ github.event.before }}"
+          after="${{ github.sha }}"
+          if [ "$before" = "0000000000000000000000000000000000000000" ]; then
+            subjects=$(git log -20 --format=%s "$after")
           else
+            subjects=$(git log "${before}..${after}" --format=%s)
+          fi
+
+          if git rev-parse "${after}^2" >/dev/null 2>&1; then
+            subjects=$(printf '%s\n%s' "$(git log -1 --format=%s "${after}^2")" "$subjects")
+          fi
+
+          bump_re='^Bump (to )?version (to )?"?([0-9]+\.[0-9]+\.[0-9]+)"?$'
+          found=false
+          while IFS= read -r subject; do
+            [ -n "$subject" ] || continue
+            if [[ "$subject" =~ $bump_re ]]; then
+              msg_ver="${BASH_REMATCH[2]}"
+              if [ "$msg_ver" = "$ver" ]; then
+                found=true
+                echo "Found bump commit: ${subject}"
+                break
+              fi
+            fi
+          done <<< "$subjects"
+
+          if [ "$found" = true ]; then
             echo "release=true" >> "$GITHUB_OUTPUT"
             echo "New version v${ver}; proceeding with release."
+          else
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "No Bump version to ${ver} commit in this push; skipping release."
           fi
 
   build:

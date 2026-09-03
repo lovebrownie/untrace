@@ -56,12 +56,12 @@ jobs:
             subjects=$(printf '%s\n%s' "$(git log -1 --format=%s "${after}^2")" "$subjects")
           fi
 
-          bump_re='^Bump (to )?version (to )?"?([0-9]+\.[0-9]+\.[0-9]+)"?$'
+          bump_re='^Bump to version "?([0-9]+\.[0-9]+\.[0-9]+)"?$'
           found=false
           while IFS= read -r subject; do
             [ -n "$subject" ] || continue
             if [[ "$subject" =~ $bump_re ]]; then
-              msg_ver="${BASH_REMATCH[2]}"
+              msg_ver="${BASH_REMATCH[1]}"
               if [ "$msg_ver" = "$ver" ]; then
                 found=true
                 echo "Found bump commit: ${subject}"
@@ -75,7 +75,7 @@ jobs:
             echo "New version v${ver}; proceeding with release."
           else
             echo "release=false" >> "$GITHUB_OUTPUT"
-            echo "No Bump version to ${ver} commit in this push; skipping release."
+            echo "No Bump to version ${ver} commit in this push; skipping release."
           fi
 
   build:

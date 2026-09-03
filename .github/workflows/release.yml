@@ -143,6 +143,25 @@ jobs:
           fi
           ls -la dist/
 
+      - name: Write release notes
+        env:
+          VERSION: ${{ needs.gate.outputs.version }}
+        shell: bash
+        run: |
+          tag="v${VERSION}"
+          base="https://github.com/${{ github.repository }}/releases/download/${tag}"
+          {
+            echo "# Untrace ${tag}"
+            echo
+            echo "## Downloads"
+            echo
+            for file in dist/*; do
+              name=$(basename "$file")
+              echo "- [${name}](${base}/${name})"
+            done
+          } > release-notes.md
+          cat release-notes.md
+
       - name: Create and push tag
         env:
           VERSION: ${{ needs.gate.outputs.version }}
@@ -157,5 +176,5 @@ jobs:
         with:
           tag_name: v${{ needs.gate.outputs.version }}
           name: Untrace v${{ needs.gate.outputs.version }}
-          generate_release_notes: true
+          body_path: release-notes.md
           files: dist/*

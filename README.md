@@ -1,18 +1,34 @@
 # Untrace
 
-<p align="center">
+<p>
   <img src="assets/icon.svg" alt="untrace" width="128" height="128">
 </p>
 
-Install once, then use normal Chrome or bare Selenium.
+Untrace is a system-level stealth stack for Chrome. Install it once, then use the browser normally. No custom flags, no extra extensions in your project, no profile scripts to maintain.
 
-| Layer | Flag |
-|-------|------|
+It ships as three modules you can toggle at install time. The **stealth extension** patches common bot-detection signals in the page. The **launch wrapper** gives every Chrome start a fresh random profile and anti-detection launch flags. The **chromedriver CDC patch** strips automation fingerprints from chromedriver binaries on disk.
+
+You don't need to keep asking whether your setup is stealthy enough. Untrace wires it in at the OS level.
+
+**Untrace GUI**
+
+<p>
+  <img src="assets/app-installed.png" alt="untrace status, all modules online" width="640">
+</p>
+
+**Fresh Chrome profile**
+
+<p>
+  <img src="assets/chrome-profile.png" alt="Chrome launched with a random profile" width="560">
+</p>
+
+## Modules
+
+| Module | Flag |
+|--------|------|
 | Stealth extension | `--stealth-extension` |
-| Chrome launch wrapper / random profiles | `--launch-wrapper` |
+| Random profiles / Chrome launch wrapper | `--launch-wrapper` |
 | Chromedriver CDC patch | `--chromedriver-cdc` |
-
-Bare `--install` enables all three.
 
 ## Install
 
@@ -33,26 +49,6 @@ python -m untrace --uninstall
 ```
 
 On Windows, Smart App Control / WDAC may block the unsigned wrapper (`WinError 4551`).
-
-## Selenium
-
-```python
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-
-driver = webdriver.Chrome(options=Options())
-```
-
-Works the same for Playwright (`channel="chrome"`), Puppeteer, and other tools that launch the system Chrome.
-
-## Custom scripts
-
-Edit `custom.js` in the active root, then re-run `--install`:
-
-- Linux: `/etc/untrace/custom.js`
-- Windows: `%ProgramData%\Untrace\custom.js`
-
-Default scripts live in `untrace/js/`.
 
 ## Development
 

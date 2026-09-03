@@ -1974,8 +1974,9 @@ def _windows_process_snapshot() -> list[tuple[int, int, str]]:
         entry.dwSize = ctypes.sizeof(PROCESSENTRY32W)
         more = kernel32.Process32FirstW(snapshot, ctypes.byref(entry))
         while more:
-            exe_name = ctypes.wstring_at(ctypes.addressof(entry.szExeFile))
-            processes.append((entry.th32ProcessID, entry.th32ParentProcessID, exe_name))
+            processes.append(
+                (entry.th32ProcessID, entry.th32ParentProcessID, entry.szExeFile)
+            )
             more = kernel32.Process32NextW(snapshot, ctypes.byref(entry))
     finally:
         kernel32.CloseHandle(snapshot)
@@ -2180,8 +2181,7 @@ def install_windows(
 ):
     chrome_path = find_chrome_windows()
     if not chrome_path:
-        print("Error: could not locate chrome.exe", file=sys.stderr)
-        sys.exit(1)
+        sys.exit("Error: could not locate chrome.exe")
 
     _kill_windows_chrome_processes()
 
@@ -2217,12 +2217,12 @@ def install_windows(
         except (OSError, RuntimeError) as exc:
             msg = (
                 "Failed to install stealth extension on Windows. "
-                "Run as Administrator and check network access to the Chrome Web Store."
+                "The Chrome Web Store listing must be public and serving a CRX "
+                f"(id {injector.WEBSTORE_EXTENSION_ID}).\n"
+                f"{exc}"
             )
-            applog.write(f"install: {msg} ({exc!r})")
-            print(msg, file=sys.stderr)
-            print(exc, file=sys.stderr)
-            sys.exit(1)
+            applog.write(f"install: {msg}")
+            sys.exit(msg)
 
     already_patched = real_exe.is_file()
     random_profile = bool(cfg.get("chrome_flags", False))
@@ -2237,19 +2237,16 @@ def install_windows(
             try:
                 chrome.rename(real_exe)
             except PermissionError:
-                print(
-                    "Permission denied. Run as Administrator and close Chrome first.",
-                    file=sys.stderr,
+                sys.exit(
+                    "Permission denied. Run as Administrator and close Chrome first."
                 )
-                sys.exit(1)
         if not compile_wrapper(
             str(real_exe), str(chrome), random_profile=random_profile
         ):
-            print("Error: compilation failed.", file=sys.stderr)
             if not already_patched:
                 print("Rolling back...", file=sys.stderr)
                 real_exe.rename(chrome)
-            sys.exit(1)
+            sys.exit("Error: compilation failed.")
         if cfg.get("js_injection", True) and not warm_windows_profile_template(
             str(real_exe)
         ):
@@ -2263,11 +2260,7 @@ def install_windows(
             chrome.unlink()
             real_exe.rename(chrome)
         except PermissionError:
-            print(
-                "Permission denied. Run as Administrator and close Chrome first.",
-                file=sys.stderr,
-            )
-            sys.exit(1)
+            sys.exit("Permission denied. Run as Administrator and close Chrome first.")
 
     _apply_chromedriver_patch(cfg)
 
@@ -2287,8 +2280,7 @@ def uninstall_windows():
     chrome_path = find_chrome_windows()
     if not chrome_path:
         applog.write("uninstall: could not locate chrome.exe")
-        print("Error: could not locate chrome.exe", file=sys.stderr)
-        sys.exit(1)
+        sys.exit("Error: could not locate chrome.exe")
 
     _kill_windows_chrome_processes()
 
@@ -2302,11 +2294,7 @@ def uninstall_windows():
             applog.write(f"uninstall: restored {chrome} from {real_exe}")
         except PermissionError as exc:
             applog.write(f"uninstall: permission denied restoring chrome: {exc!r}")
-            print(
-                "Permission denied. Run as Administrator and close Chrome first.",
-                file=sys.stderr,
-            )
-            sys.exit(1)
+            sys.exit("Permission denied. Run as Administrator and close Chrome first.")
 
     injector.remove()
     template = windows_profile_template_dir()

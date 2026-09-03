@@ -1,0 +1,163 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-main
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: Check for new release
+    runs-on: ubuntu-latest
+    outputs:
+      release: ${{ steps.check.outputs.release }}
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Resolve version
+        id: check
+        shell: bash
+        run: |
+          ver=$(uv run python -c 'from untrace import __version__; print(__version__)')
+          echo "version=${ver}" >> "$GITHUB_OUTPUT"
+
+          if git ls-remote --exit-code --tags origin "refs/tags/v${ver}" >/dev/null 2>&1; then
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "Tag v${ver} already exists; skipping release."
+            exit 0
+          fi
+
+          before="${{ github.event.before }}"
+          after="${{ github.sha }}"
+          if [ "$before" = "0000000000000000000000000000000000000000" ]; then
+            subjects=$(git log -20 --format=%s "$after")
+          else
+            subjects=$(git log "${before}..${after}" --format=%s)
+          fi
+
+          if git rev-parse "${after}^2" >/dev/null 2>&1; then
+            subjects=$(printf '%s\n%s' "$(git log -1 --format=%s "${after}^2")" "$subjects")
+          fi
+
+          bump_re='^Bump to version "?([0-9]+\.[0-9]+\.[0-9]+)"?$'
+          found=false
+          while IFS= read -r subject; do
+            [ -n "$subject" ] || continue
+            if [[ "$subject" =~ $bump_re ]]; then
+              msg_ver="${BASH_REMATCH[1]}"
+              if [ "$msg_ver" = "$ver" ]; then
+                found=true
+                echo "Found bump commit: ${subject}"
+                break
+              fi
+            fi
+          done <<< "$subjects"
+
+          if [ "$found" = true ]; then
+            echo "release=true" >> "$GITHUB_OUTPUT"
+            echo "New version v${ver}; proceeding with release."
+          else
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "No Bump to version ${ver} commit in this push; skipping release."
+          fi
+
+  build:
+    name: Build (${{ matrix.name }})
+    needs: gate
+    if: needs.gate.outputs.release == 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: Linux
+          - os: windows-latest
+            name: Windows
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Install Linux build deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            python3-tk \
+            tcl-dev \
+            tk-dev \
+            libx11-dev \
+            libxext-dev \
+            dpkg
+
+      - name: Install Inno Setup
+        if: runner.os == 'Windows'
+        run: choco install innosetup -y
+
+      - name: Build
+        run: uv run python -m untrace --build
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.name }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: [gate, build]
+    if: needs.gate.outputs.release == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          merge-multiple: true
+          path: dist
+
+      - name: Create and push tag
+        env:
+          VERSION: ${{ needs.gate.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "v${VERSION}" -m "Release v${VERSION}"
+          git push origin "v${VERSION}"
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.gate.outputs.version }}
+          name: Untrace v${{ needs.gate.outputs.version }}
+          generate_release_notes: true
+          files: dist/*

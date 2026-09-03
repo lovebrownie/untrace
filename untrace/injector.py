@@ -112,7 +112,7 @@ LINUX_CHROME_EXTERNAL_DIRS: list[Path] = [
 
 LOCATION_UNPACKED = 4
 
-WEBSTORE_EXTENSION_ID = "mgnlenokophofdnmlabkgpmlnolgomgj"
+WEBSTORE_EXTENSION_ID = "gkbambinkmelhnjlicphgbodfafhcbdi"
 WEBSTORE_UPDATE_URL = "https://clients2.google.com/service/update2/crx"
 # Legacy local force-install host — cleared on register/unregister.
 _WINDOWS_LEGACY_LOCAL_SOURCE = "http://127.0.0.1:19264"
@@ -186,6 +186,7 @@ def _download_webstore_crx() -> tuple[bytes, str]:
     )
     try:
         with urllib.request.urlopen(request, timeout=120) as response:
+            status = getattr(response, "status", None)
             data = response.read()
     except urllib.error.URLError as exc:
         raise RuntimeError(
@@ -193,7 +194,10 @@ def _download_webstore_crx() -> tuple[bytes, str]:
         ) from exc
     if len(data) < 16 or not data.startswith(b"Cr24"):
         raise RuntimeError(
-            "Chrome Web Store download did not return a CRX (check network / extension id)."
+            "Chrome Web Store is not serving a CRX for Untrace Injector "
+            f"({WEBSTORE_EXTENSION_ID})"
+            + (f" [HTTP {status}]" if status is not None else "")
+            + ". Publish or restore the public listing, then retry install."
         )
     return data, _crx_version(data)
 

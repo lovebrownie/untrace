@@ -463,8 +463,8 @@ wheels = [
 
 [[package]]
 name = "undetected"
-version = "1.0.0"
-source = { git = "https://github.com/lovebrownie/undetected#43c58e0eda7c96a706e80b3bfc3af8a2661bba5b" }
+version = "1.0.1"
+source = { git = "https://github.com/lovebrownie/undetected?branch=main#135ae98f13a32e8cf0ad05deb3e4ce457fb0b33b" }
 dependencies = [
     { name = "packaging" },
     { name = "requests" },
@@ -474,7 +474,7 @@ dependencies = [
 
 [[package]]
 name = "untrace"
-version = "2.0.2"
+version = "2.0.6"
 source = { editable = "." }
 dependencies = [
     { name = "undetected" },
@@ -490,7 +490,7 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "undetected", git = "https://github.com/lovebrownie/undetected" }]
+requires-dist = [{ name = "undetected", git = "https://github.com/lovebrownie/undetected?branch=main" }]
 
 [package.metadata.requires-dev]
 dev = [

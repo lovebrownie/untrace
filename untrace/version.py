@@ -72,22 +72,14 @@ def version_tag(version: str | None = None) -> str:
     return f"v{ver}"
 
 
-def gui_exe_name(version: str | None = None) -> str:
-    return f"Untrace-{version_tag(version)}-Portable"
-
-
 def gui_artifact_name(version: str | None = None) -> str:
     if IS_WINDOWS:
-        return f"Untrace-{version_tag(version)}-Setup.exe"
+        return f"untrace-{version_tag(version)}-setup.exe"
     ver = (version or __version__).lstrip("vV")
     machine = platform.machine().lower()
     arch = "arm64" if machine in ("aarch64", "arm64") else "amd64"
-    return f"untrace_{ver}_{arch}.deb"
+    return f"untrace-{ver}-{arch}.deb"
 
 
 def extension_zip_name(version: str | None = None) -> str:
     return f"extension-{version_tag(version)}.zip"
-
-
-def windows_zip_name(version: str | None = None) -> str:
-    return f"Untrace-{version_tag(version)}-Windows.zip"

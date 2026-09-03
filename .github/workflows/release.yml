@@ -141,6 +141,12 @@ jobs:
             echo "No dist artifacts downloaded from CI run."
             exit 1
           fi
+          for file in dist/*Windows.zip dist/*-Portable.exe; do
+            if [ -e "$file" ]; then
+              echo "Unexpected release artifact: $file"
+              exit 1
+            fi
+          done
           ls -la dist/
 
       - name: Write release notes

@@ -46,3 +46,9 @@ One root install (`sudo python -m untrace --install --stealth-extension --launch
 ## Prose
 
 - Do **not** use em dashes (`—`). Use commas, periods, colons, or parentheses instead.
+
+## Git
+
+- Use [Conventional Commits](https://www.conventionalcommits.org/): `type(scope): subject` (e.g. `feat:`, `fix:`, `chore:`, `docs:`, `ci:`, `refactor:`, `test:`).
+- Subject: imperative, lowercase, no trailing period. Optional body explains why, not what.
+- Only create commits when the user asks. Do not push unless asked.

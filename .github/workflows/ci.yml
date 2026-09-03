@@ -96,10 +96,26 @@ jobs:
       - name: Build
         run: uv run python -m untrace --build
 
+      - name: Stage release artifacts
+        shell: bash
+        run: |
+          mkdir -p release
+          shopt -s nullglob
+          rm -f dist/*Windows.zip dist/*-Portable.exe
+          for file in dist/untrace-v*-setup.exe dist/untrace-*.deb dist/extension-v*.zip; do
+            [ -e "$file" ] || continue
+            cp "$file" release/
+          done
+          ls -la release/
+          if [ -z "$(ls -A release)" ]; then
+            echo "no release artifacts staged"
+            exit 1
+          fi
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: untrace-${{ matrix.name }}-v${{ steps.ver.outputs.version }}
-          path: dist/*
+          path: release/*
           if-no-files-found: error
           retention-days: 90

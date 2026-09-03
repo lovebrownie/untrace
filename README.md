@@ -32,29 +32,38 @@ You don't need to keep asking whether your setup is stealthy enough. Untrace wir
 
 ## Install
 
-### Linux
+Download the [latest release](https://github.com/lovebrownie/untrace/releases/latest), run the installer, and use the GUI to enable modules. You can also install from the terminal.
+
+### Terminal
+
+**Linux**
 
 ```bash
-sudo python3 -m untrace --install
-python3 -m untrace --status
-sudo python3 -m untrace --uninstall
+curl -fsSL "https://raw.githubusercontent.com/lovebrownie/untrace/main/scripts/install.sh" | bash
 ```
 
-### Windows
+**Windows**
 
 ```powershell
-python -m untrace --install
-python -m untrace --status
-python -m untrace --uninstall
+irm "https://raw.githubusercontent.com/lovebrownie/untrace/main/scripts/install.ps1" | iex
 ```
 
-On Windows, Smart App Control / WDAC may block the unsigned wrapper (`WinError 4551`).
+## How to use
 
-## Development
+Enable all modules:
 
 ```bash
-uv sync --group dev
-uv run task lint
-uv run task test
-uv run task test-browser   # needs a prior --install
+untrace --install --stealth-extension --launch-wrapper --chromedriver-cdc
+```
+
+Check status:
+
+```bash
+untrace --status
+```
+
+Uninstall modules:
+
+```bash
+untrace --uninstall
 ```

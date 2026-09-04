@@ -1,3 +1,4 @@
+import getpass
 import sys
 
 import pytest
@@ -52,12 +53,12 @@ def test_unpatch_chromedriver_binary_restores_backup(tmp_path):
 
 @pytest.mark.skipif(sys.platform == "win32", reason="Linux SUDO_USER home lookup")
 def test_unpatch_all_chromedrivers_uses_sudo_user_home(tmp_path, monkeypatch):
-    real_user_home = tmp_path / "testuser"
+    invoker_home = tmp_path / getpass.getuser()
     root_home = tmp_path / "root"
-    real_user_home.mkdir()
+    invoker_home.mkdir()
     root_home.mkdir()
 
-    cache = real_user_home / ".cache" / "selenium" / "chromedriver" / "linux64"
+    cache = invoker_home / ".cache" / "selenium" / "chromedriver" / "linux64"
     cache.mkdir(parents=True)
     driver = cache / "chromedriver"
     injection = b"{window.cdc_adoQpoasnfa76pfcZLmcfl_Array = window.Array;};"
@@ -69,7 +70,7 @@ def test_unpatch_all_chromedrivers_uses_sudo_user_home(tmp_path, monkeypatch):
     monkeypatch.setattr(
         chromedriver,
         "home_dirs_to_search",
-        lambda: [root_home, real_user_home],
+        lambda: [root_home, invoker_home],
     )
 
     unpatched = chromedriver.unpatch_all_chromedrivers()
@@ -78,7 +79,7 @@ def test_unpatch_all_chromedrivers_uses_sudo_user_home(tmp_path, monkeypatch):
 
 
 def test_find_chromedriver_binaries_searches_wdm_cache(tmp_path, monkeypatch):
-    home = tmp_path / "testuser"
+    home = tmp_path / getpass.getuser()
     cache = home / ".wdm" / "drivers" / "chromedriver" / "linux64"
     cache.mkdir(parents=True)
     driver = cache / "chromedriver"

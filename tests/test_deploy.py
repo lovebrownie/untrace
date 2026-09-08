@@ -1,3 +1,4 @@
+import getpass
 import sys
 
 import pytest
@@ -10,7 +11,7 @@ _linux_only = pytest.mark.skipif(sys.platform == "win32", reason="Linux deploy p
 
 @_linux_only
 def test_home_dirs_to_search_includes_invoking_user_home(monkeypatch, tmp_path):
-    user_home = tmp_path / "testuser"
+    user_home = tmp_path / getpass.getuser()
     root_home = tmp_path / "root"
     user_home.mkdir()
     root_home.mkdir()
@@ -28,18 +29,18 @@ def test_home_dirs_to_search_includes_invoking_user_home(monkeypatch, tmp_path):
 
 @_linux_only
 def test_user_deploy_roots_includes_sudo_user(monkeypatch, tmp_path):
-    testuser_home = tmp_path / "testuser"
+    invoker_home = tmp_path / getpass.getuser()
     root_home = tmp_path / "root"
-    testuser_home.mkdir()
+    invoker_home.mkdir()
     root_home.mkdir()
     monkeypatch.setattr(
         injector,
         "home_dirs_to_search",
-        lambda: [root_home, testuser_home],
+        lambda: [root_home, invoker_home],
     )
 
     roots = injector.user_deploy_roots()
-    assert testuser_home / ".local" / "share" / "untrace" in roots
+    assert invoker_home / ".local" / "share" / "untrace" in roots
     assert root_home / ".local" / "share" / "untrace" in roots
 
 
@@ -54,9 +55,9 @@ def test_user_deploy_has_payload_ignores_log_only(tmp_path):
 
 @_linux_only
 def test_remove_user_deploys_deletes_sudo_user_tree(monkeypatch, tmp_path):
-    testuser_home = tmp_path / "testuser"
+    invoker_home = tmp_path / getpass.getuser()
     root_home = tmp_path / "root"
-    deploy = testuser_home / ".local" / "share" / "untrace"
+    deploy = invoker_home / ".local" / "share" / "untrace"
     deploy.mkdir(parents=True)
     (deploy / "chrome").write_text("#!/bin/bash\n")
     (deploy / "extension" / "manifest.json").parent.mkdir(parents=True)
@@ -65,7 +66,7 @@ def test_remove_user_deploys_deletes_sudo_user_tree(monkeypatch, tmp_path):
     monkeypatch.setattr(
         injector,
         "home_dirs_to_search",
-        lambda: [root_home, testuser_home],
+        lambda: [root_home, invoker_home],
     )
 
     removed = injector.remove_user_deploys()

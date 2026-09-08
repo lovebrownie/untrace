@@ -43,7 +43,7 @@ def _fetch_status() -> dict:
     return gui_status()
 
 
-def _run_action(action: str) -> int:
+def _run_action(action: str) -> tuple[int, str]:
     from untrace.__main__ import install, uninstall
 
     applog.write(f"gui: starting {action}")
@@ -59,19 +59,25 @@ def _run_action(action: str) -> int:
         else:
             raise ValueError(action)
     except SystemExit as exc:
-        code = exc.code
-        if code is None:
-            code = 0
-        elif not isinstance(code, int):
-            applog.write(f"gui: {action} exit: {code}")
-            code = 1
+        raw = exc.code
+        if raw is None:
+            applog.write(f"gui: {action} finished code=0")
+            return 0, ""
+        if isinstance(raw, str):
+            msg = raw.strip()
+            applog.write(f"gui: {action} exit: {msg}")
+            applog.write(f"gui: {action} finished code=1")
+            return 1, msg or f"{action} failed."
+        code = raw if isinstance(raw, int) else 1
         applog.write(f"gui: {action} finished code={code}")
-        return code
+        if code == 0:
+            return 0, ""
+        return code, f"{action} exited with code {code}."
     except Exception as exc:
         applog.write(f"gui: {action} failed: {exc!r}")
         raise
     applog.write(f"gui: {action} finished code=0")
-    return 0
+    return 0, ""
 
 
 def _bind_tree(widget: tk.Misc, sequence: str, handler) -> None:
@@ -1035,8 +1041,8 @@ class UntraceGui(tk.Tk):
             foot_row,
             text=f"{version_tag()}  ·  ",
             bg=BG,
-            fg=MUTED,
-            font=(FONT, 8),
+            fg=GREEN,
+            font=(FONT, 8, "bold"),
         )
         self._footer.pack(side=tk.LEFT)
         self._footer_log = tk.Label(
@@ -1224,6 +1230,9 @@ class UntraceGui(tk.Tk):
         for child in self.cards.winfo_children():
             child.destroy()
 
+    def _status_line(self, text: str) -> str:
+        return f"{text}  ·  {version_tag()}"
+
     def _set_hero_sub(self, text: str, *, open_log: bool = False) -> None:
         self._hero_sub.unbind("<Button-1>")
         if open_log:
@@ -1250,17 +1259,17 @@ class UntraceGui(tk.Tk):
 
         if not chrome_found:
             self.hero_title.configure(text="chrome not found", fg=HOT)
-            self._set_hero_sub("install chrome then refresh")
+            self._set_hero_sub(self._status_line("install chrome then refresh"))
             if self._hero_edge is not None:
                 self._hero_edge.configure(bg=HOT)
         elif installed:
             self.hero_title.configure(text="online", fg=GREEN_BRIGHT)
-            self._set_hero_sub(f"{active}/4 modules active")
+            self._set_hero_sub(self._status_line(f"{active}/4 modules active"))
             if self._hero_edge is not None:
                 self._hero_edge.configure(bg=GREEN)
         else:
             self.hero_title.configure(text="offline", fg=MUTED)
-            self._set_hero_sub("ready to install")
+            self._set_hero_sub(self._status_line("ready to install"))
             if self._hero_edge is not None:
                 self._hero_edge.configure(bg=AMBER)
 
@@ -1321,7 +1330,7 @@ class UntraceGui(tk.Tk):
             self._clear_cards()
             self.hero_title.configure(text="status unavailable", fg=HOT)
             self._set_hero_sub(
-                f"check {applog.display_log_path()} (click to open)",
+                self._status_line(f"check {applog.display_log_path()} (click to open)"),
                 open_log=True,
             )
             if self._hero_edge is not None:
@@ -1401,7 +1410,7 @@ class UntraceGui(tk.Tk):
             code = 1
             err = ""
             try:
-                code = _run_action(action)
+                code, err = _run_action(action)
             except Exception as exc:
                 err = str(exc)
             self.after(0, lambda: self._done(action, label, code, err))

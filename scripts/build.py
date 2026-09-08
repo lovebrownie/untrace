@@ -27,9 +27,7 @@ from untrace.version import (
     author_name,
     extension_zip_name,
     gui_artifact_name,
-    gui_exe_name,
     read_project,
-    windows_zip_name,
 )
 
 
@@ -60,7 +58,7 @@ def _pack_linux_deb(binary: Path, *, version: str) -> Path:
     meta = read_project()
     ver = version.lstrip("vV")
     arch = _linux_deb_arch()
-    pkg_name = f"untrace_{ver}_{arch}"
+    pkg_name = f"untrace-{ver}-{arch}"
     root = BUILD / "deb" / pkg_name
     if root.exists():
         shutil.rmtree(root)
@@ -215,7 +213,7 @@ def _pack_linux_deb(binary: Path, *, version: str) -> Path:
     )
     postinst.chmod(postinst.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
-    out = DIST / f"untrace_{ver}_{arch}.deb"
+    out = DIST / f"untrace-{ver}-{arch}.deb"
     if out.exists():
         out.unlink()
     code = subprocess.call(
@@ -268,7 +266,7 @@ def _pack_windows_setup(binary: Path, *, version: str) -> Path:
         raise FileNotFoundError(iss)
 
     DIST.mkdir(parents=True, exist_ok=True)
-    out_name = f"Untrace-v{ver}-Setup.exe"
+    out_name = f"untrace-v{ver}-setup.exe"
     out = DIST / out_name
     if out.exists():
         out.unlink()
@@ -338,81 +336,6 @@ def _fetch_innosetup_installer() -> Path:
     )
 
 
-def _windows_instructions(*, setup_name: str, portable_name: str) -> str:
-    return "\n".join(
-        [
-            "Untrace for Windows",
-            "===================",
-            "",
-            "Files in this zip",
-            "-----------------",
-            f"  {setup_name}     — installer (auto-installs VC++ + Inno Setup 6, then Untrace)",
-            f"  {portable_name}  — portable Untrace (no install; run as Admin)",
-            "  INSTRUCTIONS.txt — this file",
-            "",
-            "Install Untrace (recommended)",
-            "-----------------------------",
-            "1. Extract this zip to a folder.",
-            f"2. Right-click {setup_name} → Run as administrator.",
-            "3. Setup silently installs Visual C++ Redistributable and Inno Setup 6",
-            "   if they are missing, then installs Untrace.",
-            "4. Open Untrace from the Start Menu, or run: untrace",
-            "",
-            f"Fallback: run {portable_name} as Administrator, then Install in the GUI.",
-            "",
-            "If Windows blocks the Setup",
-            "---------------------------",
-            "• SmartScreen: More info → Run anyway.",
-            "• Smart App Control / WDAC: may block unsigned Setup and the Chrome wrapper.",
-            "  Turn Smart App Control off (or Evaluation), then retry.",
-            "",
-            "After Untrace is installed",
-            "--------------------------",
-            "  untrace              — opens the GUI",
-            "  untrace --status",
-            "  untrace --install --stealth-extension --launch-wrapper --chromedriver-cdc",
-            "  untrace --uninstall",
-            "",
-            "Logs: %LOCALAPPDATA%\\Untrace\\untrace.log (removed by --uninstall)",
-            "",
-        ]
-    )
-
-
-def _pack_windows_zip(
-    *,
-    setup: Path,
-    portable: Path,
-    version: str,
-) -> Path:
-    import zipfile
-
-    if not setup.is_file():
-        raise FileNotFoundError(setup)
-    if not portable.is_file():
-        raise FileNotFoundError(portable)
-
-    ver = version.lstrip("vV")
-    setup_name = setup.name
-    portable_name = portable.name
-    zip_path = DIST / windows_zip_name(ver)
-    if zip_path.exists():
-        zip_path.unlink()
-
-    instructions = _windows_instructions(
-        setup_name=setup_name,
-        portable_name=portable_name,
-    )
-
-    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        zf.write(setup, arcname=setup_name)
-        zf.write(portable, arcname=portable_name)
-        zf.writestr("INSTRUCTIONS.txt", instructions)
-
-    print(f"windows zip: {zip_path}")
-    return zip_path
-
-
 def build_gui(*, version: str | None = None) -> int:
     if not PYPROJECT.is_file():
         print(f"missing pyproject.toml: {PYPROJECT}", file=sys.stderr)
@@ -468,12 +391,8 @@ def build_gui(*, version: str | None = None) -> int:
         return 1
 
     if sys.platform == "win32":
-        portable = DIST / f"{gui_exe_name(ver)}.exe"
-        shutil.copy2(binary, portable)
-        print(f"portable: {portable}")
         try:
-            setup = _pack_windows_setup(binary, version=ver)
-            _pack_windows_zip(setup=setup, portable=portable, version=ver)
+            _pack_windows_setup(binary, version=ver)
         except Exception as exc:
             print(f"setup pack failed: {exc}", file=sys.stderr)
             print(

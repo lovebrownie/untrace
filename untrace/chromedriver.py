@@ -1,29 +1,21 @@
 from __future__ import annotations
 
-import re
 import shutil
 import stat
 from pathlib import Path
 
+from undetected.cdc import (
+    CDC_INJECTION_RE,
+    blank_substrings,
+    cdc_console_replacement,
+    default_string_blanks,
+)
 from untrace.paths import IS_WINDOWS, backup_path_for, home_dirs_to_search
 
 PATCH_MARKER = b"untrace chromedriver"
-CDC_INJECTION_RE = re.compile(rb"\{window\.cdc.*?;\}")
 
-_BINARY_NOP = b" "
-
-# Windows must keep enable-automation in the driver (remote-debugging-port).
-_BINARY_STRING_PATCHES_COMMON: tuple[tuple[bytes, bytes], ...] = (
-    (b"test-type=webdriver", _BINARY_NOP * len(b"test-type=webdriver")),
-)
-_BINARY_STRING_PATCHES_LINUX_ONLY: tuple[tuple[bytes, bytes], ...] = (
-    (b"enable-automation", _BINARY_NOP * len(b"enable-automation")),
-)
-
-BINARY_STRING_PATCHES: tuple[tuple[bytes, bytes], ...] = (
-    _BINARY_STRING_PATCHES_COMMON
-    if IS_WINDOWS
-    else _BINARY_STRING_PATCHES_COMMON + _BINARY_STRING_PATCHES_LINUX_ONLY
+BINARY_STRING_PATCHES: tuple[tuple[bytes, bytes], ...] = tuple(
+    (needle, b" " * len(needle)) for needle in default_string_blanks(windows=IS_WINDOWS)
 )
 
 
@@ -79,14 +71,7 @@ def is_patched(content: bytes) -> bool:
 
 
 def _apply_binary_string_patches(content: bytes) -> bytes:
-    updated = content
-    for old, new in BINARY_STRING_PATCHES:
-        if len(old) != len(new):
-            raise ValueError(f"patch length mismatch: {old!r} vs {new!r}")
-        if old not in updated:
-            continue
-        updated = updated.replace(old, new)
-    return updated
+    return blank_substrings(content, (old for old, _ in BINARY_STRING_PATCHES))
 
 
 def patch_chromedriver_binary(path: Path | str) -> bool:
@@ -109,9 +94,7 @@ def patch_chromedriver_binary(path: Path | str) -> bool:
             bak.chmod(0o755)
 
         injection = match[0]
-        replacement = b'{console.log("untrace chromedriver")}'.ljust(
-            len(injection), b" "
-        )
+        replacement = cdc_console_replacement(injection, PATCH_MARKER)
         if injection == replacement:
             return False
 

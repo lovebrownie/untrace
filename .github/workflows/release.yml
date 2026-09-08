@@ -1,0 +1,185 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: release-main
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: Check for new release
+    runs-on: ubuntu-latest
+    outputs:
+      release: ${{ steps.check.outputs.release }}
+      version: ${{ steps.check.outputs.version }}
+      bump_sha: ${{ steps.check.outputs.bump_sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Resolve version
+        id: check
+        shell: bash
+        run: |
+          ver=$(uv run python -c 'from untrace import __version__; print(__version__)')
+          echo "version=${ver}" >> "$GITHUB_OUTPUT"
+
+          if git ls-remote --exit-code --tags origin "refs/tags/v${ver}" >/dev/null 2>&1; then
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "Tag v${ver} already exists; skipping release."
+            exit 0
+          fi
+
+          before="${{ github.event.before }}"
+          after="${{ github.sha }}"
+          if [ "$before" = "0000000000000000000000000000000000000000" ]; then
+            log=$(git log -20 --format='%H %s' "$after")
+          else
+            log=$(git log "${before}..${after}" --format='%H %s')
+          fi
+
+          if git rev-parse "${after}^2" >/dev/null 2>&1; then
+            log=$(printf '%s\n%s' "$(git log -1 --format='%H %s' "${after}^2")" "$log")
+          fi
+
+          bump_re='^Bump to version "?([0-9]+\.[0-9]+\.[0-9]+)"?$'
+          found=false
+          bump_sha=""
+          while IFS= read -r line; do
+            [ -n "$line" ] || continue
+            sha="${line%% *}"
+            subject="${line#${sha} }"
+            if [[ "$subject" =~ $bump_re ]]; then
+              msg_ver="${BASH_REMATCH[1]}"
+              if [ "$msg_ver" = "$ver" ]; then
+                found=true
+                bump_sha="$sha"
+                echo "Found bump commit: ${subject} (${sha})"
+                break
+              fi
+            fi
+          done <<< "$log"
+
+          if [ "$found" = true ]; then
+            echo "release=true" >> "$GITHUB_OUTPUT"
+            echo "bump_sha=${bump_sha}" >> "$GITHUB_OUTPUT"
+            echo "New version v${ver}; proceeding with release."
+          else
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "No Bump to version ${ver} commit in this push; skipping release."
+          fi
+
+  release:
+    name: Publish GitHub Release
+    needs: gate
+    if: needs.gate.outputs.release == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Find CI workflow run
+        id: ci_run
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const bumpSha = "${{ needs.gate.outputs.bump_sha }}";
+            const { data } = await github.rest.actions.listWorkflowRuns({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: "ci.yml",
+              head_sha: bumpSha,
+              event: "push",
+              per_page: 10,
+            });
+            const run = data.workflow_runs.find(
+              (item) => item.status === "completed" && item.conclusion === "success"
+            );
+            if (!run) {
+              core.setFailed(
+                `No successful CI build found for bump commit ${bumpSha}. Push the branch before merging to main.`
+              );
+              return;
+            }
+            core.info(`Using CI run ${run.id} from ${bumpSha}`);
+            core.setOutput("run_id", String(run.id));
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ steps.ci_run.outputs.run_id }}
+          pattern: untrace-*-v${{ needs.gate.outputs.version }}
+          merge-multiple: true
+          path: dist
+
+      - name: Verify artifacts
+        shell: bash
+        run: |
+          shopt -s nullglob
+          files=(dist/*)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No dist artifacts downloaded from CI run."
+            exit 1
+          fi
+          for file in dist/*Windows.zip dist/*-Portable.exe; do
+            if [ -e "$file" ]; then
+              echo "Unexpected release artifact: $file"
+              exit 1
+            fi
+          done
+          ls -la dist/
+
+      - name: Write release notes
+        env:
+          VERSION: ${{ needs.gate.outputs.version }}
+        shell: bash
+        run: |
+          tag="v${VERSION}"
+          base="https://github.com/${{ github.repository }}/releases/download/${tag}"
+          {
+            echo "# Untrace ${tag}"
+            echo
+            echo "## Downloads"
+            echo
+            for file in dist/*; do
+              name=$(basename "$file")
+              echo "- [${name}](${base}/${name})"
+            done
+          } > release-notes.md
+          cat release-notes.md
+
+      - name: Create and push tag
+        env:
+          VERSION: ${{ needs.gate.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "v${VERSION}" -m "Release v${VERSION}"
+          git push origin "v${VERSION}"
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.gate.outputs.version }}
+          name: Untrace v${{ needs.gate.outputs.version }}
+          body_path: release-notes.md
+          files: dist/*

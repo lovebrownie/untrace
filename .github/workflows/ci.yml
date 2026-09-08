@@ -118,4 +118,4 @@ jobs:
           name: untrace-${{ matrix.name }}-v${{ steps.ver.outputs.version }}
           path: release/*
           if-no-files-found: error
-          retention-days: 90
+          retention-days: 30

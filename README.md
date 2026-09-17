@@ -2,7 +2,7 @@
 
 System-level stealth for Chrome and Selenium on Windows and Linux.
 
-**Site:** [lovebrownie.github.io/untrace](https://lovebrownie.github.io/untrace/) · [Docs](https://lovebrownie.github.io/untrace/docs.html)
+[Docs](https://lovebrownie.github.io/untrace)
 
 <p>
   <img src="assets/app-installed.png" alt="Untrace GUI with all modules online" width="640">

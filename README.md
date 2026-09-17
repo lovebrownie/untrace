@@ -50,10 +50,10 @@ irm "https://raw.githubusercontent.com/lovebrownie/untrace/main/scripts/install.
 
 ## How to use
 
-Enable all modules:
+Install (enables all modules):
 
 ```bash
-untrace --install --stealth-extension --launch-wrapper --chromedriver-cdc
+untrace --install
 ```
 
 Check status:

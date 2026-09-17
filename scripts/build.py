@@ -336,6 +336,19 @@ def _fetch_innosetup_installer() -> Path:
     )
 
 
+def _pyinstaller_tkinter_args() -> list[str]:
+    return [
+        "--hidden-import",
+        "untrace.gui",
+        "--hidden-import",
+        "tkinter",
+        "--hidden-import",
+        "_tkinter",
+        "--collect-all",
+        "tkinter",
+    ]
+
+
 def build_gui(*, version: str | None = None) -> int:
     if not PYPROJECT.is_file():
         print(f"missing pyproject.toml: {PYPROJECT}", file=sys.stderr)
@@ -377,6 +390,7 @@ def build_gui(*, version: str | None = None) -> int:
         "--specpath",
         str(BUILD / "pyinstaller"),
     ]
+    cmd.extend(_pyinstaller_tkinter_args())
     if sys.platform == "win32":
         cmd.append("--uac-admin")
     cmd.append(str(entry))

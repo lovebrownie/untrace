@@ -908,9 +908,9 @@ def uninstall_linux():
 
     if not _untrace_present():
         applog.write("uninstall: no untrace patch found — nothing to restore")
-        applog.close()
         injector.remove_user_deploys()
-        print("Uninstalled")
+        applog.write("Uninstalled")
+        applog.close()
         return
 
     injector.use_system_root()
@@ -944,9 +944,9 @@ def uninstall_linux():
                 f"{unpatched_managers}"
             )
         applog.write("uninstall: complete; removing user deploy roots (incl. log)")
-        applog.close()
         injector.remove_user_deploys()
-        print("Uninstalled")
+        applog.write("Uninstalled")
+        applog.close()
     finally:
         injector.clear_untrace_root_override()
 
@@ -1727,6 +1727,19 @@ def is_admin_windows() -> bool:
         return False
 
 
+_devnull_stdio = None
+
+
+def _detach_stdio_for_gui() -> None:
+    global _devnull_stdio
+    if not IS_WINDOWS:
+        return
+    if _devnull_stdio is None:
+        _devnull_stdio = Path(os.devnull).open("w", encoding="utf-8", errors="replace")
+    for name in ("stdout", "stderr", "__stdout__", "__stderr__"):
+        setattr(sys, name, _devnull_stdio)
+
+
 def hide_windows_console() -> None:
     if not IS_WINDOWS:
         return
@@ -1739,6 +1752,7 @@ def hide_windows_console() -> None:
         if hwnd:
             user32.ShowWindow(hwnd, 0)
         kernel32.FreeConsole()
+        _detach_stdio_for_gui()
     except Exception:
         pass
 
@@ -1999,6 +2013,17 @@ def _windows_process_tree_pids(root_pid: int) -> set[int]:
     return pids
 
 
+def _windows_handle_invalid(handle) -> bool:
+    if not handle:
+        return True
+    value = (
+        int(handle)
+        if isinstance(handle, int)
+        else int(getattr(handle, "value", 0) or 0)
+    )
+    return value in (0, -1, 0xFFFFFFFF)
+
+
 def _terminate_windows_process_tree(root_pid: int, timeout_ms: int = 10000) -> None:
     """Terminate a process and its descendants via the Win32 API."""
     import ctypes
@@ -2033,7 +2058,7 @@ def _terminate_windows_process_tree(root_pid: int, timeout_ms: int = 10000) -> N
     root_handle = None
     for pid in order:
         handle = kernel32.OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, False, pid)
-        if not handle:
+        if _windows_handle_invalid(handle):
             continue
         try:
             kernel32.TerminateProcess(handle, 1)
@@ -2124,7 +2149,7 @@ def warm_windows_profile_template(real_exe: str) -> bool:
         _terminate_windows_process_tree(proc.pid)
         try:
             proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
+        except (subprocess.TimeoutExpired, OSError):
             pass
         _kill_windows_chrome_processes()
     return windows_profile_template_ready()
@@ -2309,9 +2334,9 @@ def uninstall_windows():
             f"{unpatched_drivers}"
         )
     applog.write("uninstall: complete; removing user deploy roots (incl. log)")
-    applog.close()
     injector.remove_user_deploys()
-    print("Uninstalled")
+    applog.write("Uninstalled")
+    applog.close()
 
 
 def install(

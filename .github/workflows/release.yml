@@ -43,46 +43,110 @@ jobs:
           if git ls-remote --exit-code --tags origin "refs/tags/v${ver}" >/dev/null 2>&1; then
             echo "release=false" >> "$GITHUB_OUTPUT"
             echo "Tag v${ver} already exists; skipping release."
+            {
+              echo "## Release gate"
+              echo ""
+              echo "**Release skipped.** Tag \`v${ver}\` already exists on the remote."
+            } >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
 
           before="${{ github.event.before }}"
           after="${{ github.sha }}"
           if [ "$before" = "0000000000000000000000000000000000000000" ]; then
-            log=$(git log -20 --format='%H %s' "$after")
-          else
+            log=$(git log -30 --format='%H %s' "$after")
+          elif git rev-parse --verify "${before}^{commit}" >/dev/null 2>&1 \
+            && git merge-base --is-ancestor "$before" "$after" 2>/dev/null; then
             log=$(git log "${before}..${after}" --format='%H %s')
+          else
+            echo "Push before (${before}) is missing or not an ancestor of ${after}; scanning recent commits."
+            log=$(git log -30 --format='%H %s' "$after")
           fi
 
           if git rev-parse "${after}^2" >/dev/null 2>&1; then
-            log=$(printf '%s\n%s' "$(git log -1 --format='%H %s' "${after}^2")" "$log")
+            merge_log=$(
+              git log --format='%H %s' "${after}^2" --not "${after}^1" 2>/dev/null | head -50
+            )
+            if [ -n "$merge_log" ]; then
+              log=$(printf '%s\n%s' "$merge_log" "$log")
+            else
+              log=$(printf '%s\n%s' "$(git log -1 --format='%H %s' "${after}^2")" "$log")
+            fi
           fi
 
-          bump_re='^Bump to version "?([0-9]+\.[0-9]+\.[0-9]+)"?$'
-          found=false
-          bump_sha=""
-          while IFS= read -r line; do
-            [ -n "$line" ] || continue
-            sha="${line%% *}"
-            subject="${line#${sha} }"
-            if [[ "$subject" =~ $bump_re ]]; then
-              msg_ver="${BASH_REMATCH[1]}"
+          bump_ver_from_subject() {
+            local subject="$1"
+            local rest=""
+            case "$subject" in
+              Bump\ to\ version\ \"*)
+                rest="${subject#Bump to version \"}"
+                rest="${rest%\"}"
+                ;;
+              Bump\ to\ version\ *)
+                rest="${subject#Bump to version }"
+                ;;
+              chore:\ bump\ version\ to\ *)
+                rest="${subject#chore: bump version to }"
+                ;;
+              *)
+                return 1
+                ;;
+            esac
+            if [[ "$rest" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "$rest"
+              return 0
+            fi
+            return 1
+          }
+
+          find_bump_in_log() {
+            local scan="$1"
+            while IFS= read -r line; do
+              [ -n "$line" ] || continue
+              local sha="${line%% *}"
+              local subject="${line#${sha} }"
+              local msg_ver
+              msg_ver=$(bump_ver_from_subject "$subject") || continue
               if [ "$msg_ver" = "$ver" ]; then
-                found=true
                 bump_sha="$sha"
                 echo "Found bump commit: ${subject} (${sha})"
-                break
+                return 0
               fi
-            fi
-          done <<< "$log"
+            done <<< "$scan"
+            return 1
+          }
+
+          found=false
+          bump_sha=""
+          skip_reason=""
+          if find_bump_in_log "$log"; then
+            found=true
+          elif find_bump_in_log "$(git log -50 --format='%H %s' "$after")"; then
+            found=true
+            echo "Bump commit found on ${after} history (not only in this push range)."
+          fi
 
           if [ "$found" = true ]; then
             echo "release=true" >> "$GITHUB_OUTPUT"
             echo "bump_sha=${bump_sha}" >> "$GITHUB_OUTPUT"
             echo "New version v${ver}; proceeding with release."
+            {
+              echo "## Release gate"
+              echo ""
+              echo "Publishing **v${ver}** (bump commit \`${bump_sha}\`)."
+            } >> "$GITHUB_STEP_SUMMARY"
           else
             echo "release=false" >> "$GITHUB_OUTPUT"
-            echo "No Bump to version ${ver} commit in this push; skipping release."
+            skip_reason="No bump commit for version ${ver} in this push."
+            echo "${skip_reason}"
+            echo "Expected a commit like chore: bump version to ${ver}."
+            {
+              echo "## Release gate"
+              echo ""
+              echo "**Release skipped.** ${skip_reason}"
+              echo ""
+              echo "Pyproject version is **${ver}**. Run \`./bumpversion.sh patch\` (or minor/major), push, then merge to main. Expected: \`chore: bump version to ${ver}\` (legacy \`Bump to version \"${ver}\"\` also works)."
+            } >> "$GITHUB_STEP_SUMMARY"
           fi
 
   release:

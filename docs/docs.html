@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Untrace docs</title>
+    <meta
+      name="description"
+      content="Untrace docs: GUI, modules, commands, and troubleshooting."
+    />
+    <link rel="icon" href="assets/icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="assets/site.css" />
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <div class="header-bar">
+          <nav class="site-nav" aria-label="Site">
+            <a class="nav-link" href="index.html">Home</a>
+            <a class="nav-link" href="docs.html" aria-current="page">Docs</a>
+          </nav>
+          <a
+            class="github-icon"
+            href="https://github.com/lovebrownie/untrace"
+            aria-label="GitHub repository"
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path
+                d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"
+              />
+            </svg>
+          </a>
+        </div>
+        <h1>Docs</h1>
+        <p class="doc-lede">GUI, modules, CLI, troubleshooting.</p>
+      </header>
+
+      <section class="phosphor-panel">
+        <h2>GUI</h2>
+        <p>
+          After you install Untrace, open the desktop app. The GUI is the easiest way
+          to install every module at once, uninstall everything, and see which pieces are online.
+        </p>
+        <p>
+          For anything more specific, use the terminal. The GUI always installs all three modules together. It does not
+          expose per-module toggles, partial installs, or the same control you get from the CLI flags below.
+        </p>
+        <img
+          class="doc-shot"
+          src="assets/app-installed.png"
+          width="640"
+          height="360"
+          alt="Untrace GUI with all modules online"
+        />
+      </section>
+
+      <section class="phosphor-panel">
+        <h2>Modules</h2>
+        <table class="data">
+          <thead>
+            <tr>
+              <th scope="col">Module</th>
+              <th scope="col">Flag</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Stealth extension</td>
+              <td><code>--stealth-extension</code></td>
+            </tr>
+            <tr>
+              <td>Launch wrapper</td>
+              <td><code>--launch-wrapper</code></td>
+            </tr>
+            <tr>
+              <td>Chromedriver CDC patch</td>
+              <td><code>--chromedriver-cdc</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section class="phosphor-panel">
+        <h2>Use</h2>
+        <div class="code-lines">
+          <div class="code-line">
+            <code class="code-line-text">untrace --install  # all three modules when no extra flags</code>
+            <button type="button" class="copy-btn" aria-label="Copy">
+              <svg viewBox="0 0 16 16" aria-hidden="true">
+                <path
+                  d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 0 1 0 1.5h-1.5a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-1.5a.75.75 0 0 1 1.5 0v1.5A1.75 1.75 0 0 1 9.25 16h-7.5A1.75 1.75 0 0 1 0 14.25Z"
+                />
+                <path
+                  d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0 1 14.25 11h-7.5A1.75 1.75 0 0 1 5 9.25Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z"
+                />
+              </svg>
+            </button>
+          </div>
+          <div class="code-line">
+            <code class="code-line-text">untrace --status</code>
+            <button type="button" class="copy-btn" aria-label="Copy">
+              <svg viewBox="0 0 16 16" aria-hidden="true">
+                <path
+                  d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 0 1 0 1.5h-1.5a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-1.5a.75.75 0 0 1 1.5 0v1.5A1.75 1.75 0 0 1 9.25 16h-7.5A1.75 1.75 0 0 1 0 14.25Z"
+                />
+                <path
+                  d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0 1 14.25 11h-7.5A1.75 1.75 0 0 1 5 9.25Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z"
+                />
+              </svg>
+            </button>
+          </div>
+          <div class="code-line">
+            <code class="code-line-text">untrace --uninstall</code>
+            <button type="button" class="copy-btn" aria-label="Copy">
+              <svg viewBox="0 0 16 16" aria-hidden="true">
+                <path
+                  d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 0 1 0 1.5h-1.5a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-1.5a.75.75 0 0 1 1.5 0v1.5A1.75 1.75 0 0 1 9.25 16h-7.5A1.75 1.75 0 0 1 0 14.25Z"
+                />
+                <path
+                  d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0 1 14.25 11h-7.5A1.75 1.75 0 0 1 5 9.25Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z"
+                />
+              </svg>
+            </button>
+          </div>
+        </div>
+        <p>To install only specific modules, pass the flags you want. Any flag you omit stays off for that run:</p>
+        <div class="code-lines">
+          <div class="code-line">
+            <code class="code-line-text">untrace --install --stealth-extension</code>
+            <button type="button" class="copy-btn" aria-label="Copy">
+              <svg viewBox="0 0 16 16" aria-hidden="true">
+                <path
+                  d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 0 1 0 1.5h-1.5a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-1.5a.75.75 0 0 1 1.5 0v1.5A1.75 1.75 0 0 1 9.25 16h-7.5A1.75 1.75 0 0 1 0 14.25Z"
+                />
+                <path
+                  d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0 1 14.25 11h-7.5A1.75 1.75 0 0 1 5 9.25Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z"
+                />
+              </svg>
+            </button>
+          </div>
+          <div class="code-line">
+            <code class="code-line-text">untrace --install --launch-wrapper --chromedriver-cdc</code>
+            <button type="button" class="copy-btn" aria-label="Copy">
+              <svg viewBox="0 0 16 16" aria-hidden="true">
+                <path
+                  d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 0 1 0 1.5h-1.5a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-1.5a.75.75 0 0 1 1.5 0v1.5A1.75 1.75 0 0 1 9.25 16h-7.5A1.75 1.75 0 0 1 0 14.25Z"
+                />
+                <path
+                  d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0 1 14.25 11h-7.5A1.75 1.75 0 0 1 5 9.25Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z"
+                />
+              </svg>
+            </button>
+          </div>
+        </div>
+        <p>On Linux you may need elevated privileges, for example:</p>
+        <div class="code-lines">
+          <div class="code-line">
+            <code class="code-line-text">sudo untrace --install --stealth-extension --launch-wrapper</code>
+            <button type="button" class="copy-btn" aria-label="Copy">
+              <svg viewBox="0 0 16 16" aria-hidden="true">
+                <path
+                  d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 0 1 0 1.5h-1.5a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-1.5a.75.75 0 0 1 1.5 0v1.5A1.75 1.75 0 0 1 9.25 16h-7.5A1.75 1.75 0 0 1 0 14.25Z"
+                />
+                <path
+                  d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0 1 14.25 11h-7.5A1.75 1.75 0 0 1 5 9.25Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z"
+                />
+              </svg>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section class="phosphor-panel">
+        <h2>Troubleshooting</h2>
+        <ul class="troubleshoot">
+          <li>
+            <h3>Could not locate chrome.exe</h3>
+            <p>Install Google Chrome (stable). Untrace wraps the system Chrome binary; Chromium-only paths may not be detected.</p>
+          </li>
+          <li>
+            <h3>WinError 4551 or Smart App Control blocks the wrapper</h3>
+            <p>
+              Windows Smart App Control or WDAC can block the unsigned Chrome wrapper or patched chromedriver. Allow
+              Untrace in Windows Security, temporarily turn off Smart App Control for local testing, or run on Linux.
+            </p>
+          </li>
+          <li>
+            <h3>Log file</h3>
+            <p>When the GUI or CLI fails, open the log and include it in a GitHub issue:</p>
+            <div class="code-lines">
+              <div class="code-line">
+                <code class="code-line-text">%LOCALAPPDATA%\Untrace\untrace.log</code>
+                <button type="button" class="copy-btn" aria-label="Copy">
+                  <svg viewBox="0 0 16 16" aria-hidden="true">
+                    <path
+                      d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 0 1 0 1.5h-1.5a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-1.5a.75.75 0 0 1 1.5 0v1.5A1.75 1.75 0 0 1 9.25 16h-7.5A1.75 1.75 0 0 1 0 14.25Z"
+                    />
+                    <path
+                      d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0 1 14.25 11h-7.5A1.75 1.75 0 0 1 5 9.25Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z"
+                    />
+                  </svg>
+                </button>
+              </div>
+              <div class="code-line">
+                <code class="code-line-text">~/.local/share/untrace/untrace.log</code>
+                <button type="button" class="copy-btn" aria-label="Copy">
+                  <svg viewBox="0 0 16 16" aria-hidden="true">
+                    <path
+                      d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 0 1 0 1.5h-1.5a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-1.5a.75.75 0 0 1 1.5 0v1.5A1.75 1.75 0 0 1 9.25 16h-7.5A1.75 1.75 0 0 1 0 14.25Z"
+                    />
+                    <path
+                      d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0 1 14.25 11h-7.5A1.75 1.75 0 0 1 5 9.25Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z"
+                    />
+                  </svg>
+                </button>
+              </div>
+            </div>
+            <p>Windows path above, Linux path below.</p>
+          </li>
+        </ul>
+      </section>
+
+      <footer>
+        <p>
+          MIT,
+          <a href="https://github.com/lovebrownie/untrace">lovebrownie/untrace</a>
+        </p>
+      </footer>
+    </div>
+    <script src="assets/copy.js"></script>
+  </body>
+</html>

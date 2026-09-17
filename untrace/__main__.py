@@ -2016,7 +2016,11 @@ def _windows_process_tree_pids(root_pid: int) -> set[int]:
 def _windows_handle_invalid(handle) -> bool:
     if not handle:
         return True
-    value = int(handle) if isinstance(handle, int) else int(getattr(handle, "value", 0) or 0)
+    value = (
+        int(handle)
+        if isinstance(handle, int)
+        else int(getattr(handle, "value", 0) or 0)
+    )
     return value in (0, -1, 0xFFFFFFFF)
 
 

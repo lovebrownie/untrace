@@ -51,4 +51,5 @@ One root install (`sudo python -m untrace --install --stealth-extension --launch
 
 - Use [Conventional Commits](https://www.conventionalcommits.org/): `type(scope): subject` (e.g. `feat:`, `fix:`, `chore:`, `docs:`, `ci:`, `refactor:`, `test:`).
 - Subject: imperative, lowercase, no trailing period. Optional body explains why, not what.
+- **Version bumps:** run `./bumpversion.sh patch|minor|major` and commit when it prompts. Do not hand-edit `version` in `pyproject.toml` or write bump commits manually; the script sets the version and `chore: bump version to X.Y.Z` message the release workflow expects.
 - Only create commits when the user asks. Do not push unless asked.
